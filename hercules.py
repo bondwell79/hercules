@@ -4038,9 +4038,26 @@ class Dashboard:
     def _handle_event(self, event: Dict[str, Any]) -> None:
         etype = event.get("type")
         if etype == "status_change":
+            # Refrescar el tablero siempre (la tarea puede cambiar de columna).
             self._refresh_task_lists()
-            if event.get("task_id") == self.selected_task_id:
+
+            task_id = event.get("task_id")
+            new_status = event.get("status")
+
+            # Caso 1: la tarea que cambió es la que está seleccionada.
+            # → Recargar su historial para reflejar el nuevo estado.
+            if task_id == self.selected_task_id:
                 self._select_task(self.selected_task_id)
+
+            # Caso 2: la tarea terminó y NO hay nada seleccionado.
+            # → Auto-seleccionarla para que el usuario vea el resultado
+            #   sin tener que pulsar "Ver".
+            elif new_status in (
+                TaskStatus.COMPLETED.value,
+                TaskStatus.FAILED.value,
+                TaskStatus.CANCELLED.value,
+            ) and self.selected_task_id is None:
+                self._select_task(task_id)
         elif etype == "history_update":
             if event.get("task_id") == self.selected_task_id:
                 self._select_task(self.selected_task_id)
