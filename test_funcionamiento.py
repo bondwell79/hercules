@@ -52,7 +52,7 @@ from typing import Any, Dict, List, Optional, Tuple
 SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(SCRIPT_DIR))
 
-import gestor_agentes as ga  # noqa: E402
+import hercules as ga  # noqa: E402
 
 
 # ============================================================================
@@ -107,7 +107,7 @@ def setup_test_env() -> Tuple[str, str]:
     """
     Crea un directorio temporal con workspace propio para no contaminar
     el entorno real del usuario. Parchea los globales WORKSPACE_DIR y
-    MAX_ITERATIONS del módulo gestor_agentes para que apunten al
+    MAX_ITERATIONS del módulo hercules para que apunten al
     entorno de test.
     """
     tmp = Path(tempfile.mkdtemp(prefix="test_funcionamiento_"))
@@ -741,7 +741,7 @@ def test_three_sequential_tasks(tmp_dir: str, workspace: str) -> None:
 
 def main() -> int:
     print("=" * 70)
-    print("TEST DE FUNCIONAMIENTO — gestor_agentes.py")
+    print("TEST DE FUNCIONAMIENTO — hercules.py")
     print("=" * 70)
     print("Verificando que el programa acepta dos tareas simultáneas,")
     print("solicitadas una tras otra por el usuario.")

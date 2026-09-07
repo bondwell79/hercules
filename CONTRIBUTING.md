@@ -6,7 +6,7 @@ Abre un [issue](https://github.com/ruben-pastor/gestor-agentes/issues) con:
 - Pasos para reproducir.
 - Salida esperada vs. obtenida.
 - Versión de Python y SO.
-- Contenido relevante de `gestor_agentes.db` (si aplica).
+- Contenido relevante de `hercules.db` (si aplica).
 
 ## Proponer features
 

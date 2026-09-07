@@ -1,9 +1,10 @@
 /.venv
 /venv
-/gestor_agentes.build
-/gestor_agentes.db
-/gestor_agentes.dist
-/gestor_agentes.spec
+/env
+/hercules.build
+/hercules.db
+/hercules.dist
+/hercules.spec
 /modelos
 /workspace
 /__pycache__

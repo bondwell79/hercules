@@ -179,7 +179,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
 
     print("=" * 70)
-    print("  TEST GLOBAL — gestor_agentes")
+    print("  TEST GLOBAL — hercules")
     print("=" * 70)
     print(f"  Suites a ejecutar: {len(SUITES)}")
     for _, name in SUITES:

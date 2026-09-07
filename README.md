@@ -1,4 +1,4 @@
-# Gestor de Agentes LLM
+# Hercules
 
 > Agente LLM autónomo con control de permisos humano-en-el-bucle (HITL), construido exclusivamente con la biblioteca estándar de Python.
 
@@ -14,7 +14,7 @@
 - 🔌 **Modo dual LLM:** local (GGUF con `llama-cpp-python`) o HTTP (OpenAI/Ollama/llama.cpp server).
 - 📊 **Dashboard tkinter** con 4 zonas: prompt, tablero de tareas, historial y panel de aprobación.
 - 💾 **Persistencia SQLite** con borrado en cascada y limpieza al arrancar.
-- 🧪 **Resiliencia probada:** 108+ tests de resiliencia, más suites de funcionamiento en paralelo y orquestación de subtareas.
+- 🧪 **Resiliencia probada:** suites de resiliencia, funcionamiento en paralelo y orquestación de subtareas.
 - 📦 **Ejecutable autónomo** compilable con Nuitka (cero instalación en el destino).
 
 ## 📦 Requisitos
@@ -22,23 +22,25 @@
 - Python 3.10 o superior
 - Windows 10/11 (probado en Windows; tkinter es multiplataforma)
 - Opcional: `llama-cpp-python` (solo para modo local)
-- Opcional: un modelo GGUF (recomendado: `Qwen3-4B-Instruct-2507-Q4_K_M.gguf`)
+- Opcional: un modelo GGUF (ver carpeta `modelos/`)
 
 ## 🚀 Instalación rápida
 
 ```bash
 git clone https://github.com/bondwell79/agentes.git
-cd gestor-agentes
-python gestor_agentes.py
+cd agentes
+python hercules.py
 ```
 
-El fichero `config.ini` ya viene incluido con valores por defecto; edítalo para ajustar la ruta del modelo GGUF u otros parámetros (ver [Configuración](docs/CONFIGURATION.md)).
+También puedes usar el script `run.bat`, que activa el entorno virtual (`env/`) y lanza `hercules.py`.
+
+El fichero `config.ini` ya viene incluido con valores por defecto; edítalo para ajustar la ruta del modelo GGUF, el modo del LLM (`local` / `http`) y otros parámetros.
 
 ## 🧪 Tests
 
 ```bash
 python test_global.py             # ejecuta todas las suites y muestra el resumen
-python test_resilience.py         # 108+ escenarios de resiliencia
+python test_resilience.py         # escenarios de resiliencia del agente
 python test_funcionamiento.py     # tareas en paralelo
 python test_subtareas.py          # orquestador de subtareas
 ```
@@ -49,16 +51,7 @@ python test_subtareas.py          # orquestador de subtareas
 nuitka.bat
 ```
 
-El ejecutable queda en `gestor_agentes.dist/gestor_agentes.exe`.
-
-## 📚 Documentación
-
-- [Manual de usuario](docs/MANUAL.md)
-- [Guía de despliegue](docs/DEPLOYMENT.md)
-- [Arquitectura](docs/ARCHITECTURE.md)
-- [Configuración](docs/CONFIGURATION.md)
-- [Seguridad](docs/SECURITY.md)
-- [Testing](docs/TESTING.md)
+El ejecutable queda en `hercules.dist/hercules.exe`.
 
 ## 📄 Licencia
 

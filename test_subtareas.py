@@ -42,7 +42,7 @@ from typing import Any, Dict, List, Optional, Tuple
 SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(SCRIPT_DIR))
 
-import gestor_agentes as ga  # noqa: E402
+import hercules as ga  # noqa: E402
 
 
 # ============================================================================

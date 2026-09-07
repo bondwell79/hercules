@@ -5,7 +5,7 @@ test_resilience.py
 Test de resiliencia del agente ante respuestas tipo tool incorrectas
 o malformadas por parte del modelo LLM.
 
-Objetivo: verificar que gestor_agentes.py NO se rompe ante respuestas
+Objetivo: verificar que hercules.py NO se rompe ante respuestas
 erróneas del modelo (tool_calls malformados, JSON inválido, nombres
 de herramientas inexistentes, argumentos con tipos incorrectos, etc.).
 
@@ -34,7 +34,7 @@ from unittest.mock import MagicMock
 SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(SCRIPT_DIR))
 
-import gestor_agentes as ga  # noqa: E402
+import hercules as ga  # noqa: E402
 
 
 # ============================================================================
@@ -111,7 +111,7 @@ def setup_test_env() -> Tuple[str, str]:
     para no contaminar el entorno real del usuario.
 
     También parchea los globales WORKSPACE_DIR y MAX_ITERATIONS del módulo
-    gestor_agentes para que apunten al entorno de test.
+    hercules para que apunten al entorno de test.
     """
     tmp = Path(tempfile.mkdtemp(prefix="test_resilience_"))
     workspace = tmp / "workspace"
@@ -1328,7 +1328,7 @@ def test_tools_extreme_args(tmp_dir: str, workspace: str) -> None:
 
 def main() -> int:
     print("=" * 70)
-    print("TEST DE RESILIENCIA — gestor_agentes.py")
+    print("TEST DE RESILIENCIA — hercules.py")
     print("=" * 70)
     print("Verificando resistencia a respuestas tipo tool incorrectas del modelo.")
     print()

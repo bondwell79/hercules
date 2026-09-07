@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-gestor_agentes.py
+hercules.py
 
 Agente LLM Autónomo con Control de Permisos (HITL - Human-in-the-Loop).
 
@@ -57,8 +57,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # CONFIGURACIÓN (config.ini + variables de entorno)
 # ============================================================================
 
-CONFIG_PATH = os.environ.get("GESTOR_AGENTES_CONFIG", "config.ini")
-SUBTAREAS_INI_PATH = os.environ.get("GESTOR_AGENTES_SUBTAREAS_INI", "subtareas.ini")
+CONFIG_PATH = os.environ.get("HERCULES_CONFIG", "config.ini")
+SUBTAREAS_INI_PATH = os.environ.get("HERCULES_SUBTAREAS_INI", "subtareas.ini")
 
 
 def _str_to_bool(value: str) -> bool:
@@ -71,7 +71,7 @@ class Config:
     Carga la configuración desde config.ini con fallback a variables de entorno.
 
     Prioridad (de mayor a menor):
-        1. Variables de entorno (GESTOR_AGENTES_* y LLM_*)
+        1. Variables de entorno (HERCULES_* y LLM_*)
         2. Fichero config.ini
         3. Valores por defecto
     """
@@ -92,7 +92,7 @@ class Config:
             "path": "./workspace",
         },
         "Database": {
-            "path": "gestor_agentes.db",
+            "path": "hercules.db",
         },
         "Agent": {
             "max_iterations": "10",
@@ -228,34 +228,34 @@ class Config:
     @property
     def workspace_path(self) -> str:
         return os.environ.get(
-            "GESTOR_AGENTES_WORKSPACE", self._parser.get("Workspace", "path")
+            "HERCULES_WORKSPACE", self._parser.get("Workspace", "path")
         )
 
     # --- Database ---
 
     @property
     def db_path(self) -> str:
-        return os.environ.get("GESTOR_AGENTES_DB", self._parser.get("Database", "path"))
+        return os.environ.get("HERCULES_DB", self._parser.get("Database", "path"))
 
     # --- Agent ---
 
     @property
     def max_iterations(self) -> int:
-        env_val = os.environ.get("GESTOR_AGENTES_MAX_ITER")
+        env_val = os.environ.get("HERCULES_MAX_ITER")
         if env_val:
             return int(env_val)
         return self._parser.getint("Agent", "max_iterations")
 
     @property
     def loop_threshold(self) -> int:
-        env_val = os.environ.get("GESTOR_AGENTES_LOOP_THRESHOLD")
+        env_val = os.environ.get("HERCULES_LOOP_THRESHOLD")
         if env_val:
             return int(env_val)
         return self._parser.getint("Agent", "loop_threshold")
 
     @property
     def max_rectification_retries(self) -> int:
-        env_val = os.environ.get("GESTOR_AGENTES_MAX_RECTIFICATION_RETRIES")
+        env_val = os.environ.get("HERCULES_MAX_RECTIFICATION_RETRIES")
         if env_val:
             return int(env_val)
         return self._parser.getint("Agent", "max_rectification_retries")
@@ -268,7 +268,7 @@ class Config:
 
         Si el valor está fuera del rango válido, se limita a [1, 100].
         """
-        env_val = os.environ.get("GESTOR_AGENTES_CONTEXT_COMPACT_THRESHOLD")
+        env_val = os.environ.get("HERCULES_CONTEXT_COMPACT_THRESHOLD")
         if env_val:
             try:
                 value = int(env_val)
@@ -282,7 +282,7 @@ class Config:
 
     @property
     def ui_fullscreen(self) -> bool:
-        env_val = os.environ.get("GESTOR_AGENTES_FULLSCREEN")
+        env_val = os.environ.get("HERCULES_FULLSCREEN")
         if env_val is not None:
             return _str_to_bool(env_val)
         return self._parser.getboolean("UI", "fullscreen")
