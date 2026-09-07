@@ -5,6 +5,6 @@
 /hercules.db
 /hercules.dist
 /hercules.spec
-/modelos
+/modelos/*.gguf
 /workspace
 /__pycache__

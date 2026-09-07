@@ -754,7 +754,6 @@ class Database:
         subtask_type: Optional[SubtaskType] = None,
         attempt_number: int = 0,
     ) -> Task:
-        #now = datetime.utcnow().isoformat(timespec="seconds")
         now = datetime.now(UTC).isoformat(timespec="seconds")
         with self._lock, self._connect() as conn:
             cur = conn.execute(
@@ -883,7 +882,7 @@ class Database:
         event_type: EventType,
         content: str,
     ) -> HistoryEntry:
-        now = datetime.utcnow().isoformat(timespec="seconds")
+        now = datetime.now(UTC).isoformat(timespec="seconds")
         with self._lock, self._connect() as conn:
             cur = conn.execute(
                 "INSERT INTO history (task_id, timestamp, event_type, content) "
