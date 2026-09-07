@@ -42,6 +42,7 @@ import traceback
 import urllib.error
 import urllib.request
 import uuid
+import webbrowser
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -57,6 +58,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # ============================================================================
 
 CONFIG_PATH = os.environ.get("GESTOR_AGENTES_CONFIG", "config.ini")
+SUBTAREAS_INI_PATH = os.environ.get("GESTOR_AGENTES_SUBTAREAS_INI", "subtareas.ini")
 
 
 def _str_to_bool(value: str) -> bool:
@@ -147,6 +149,10 @@ class Config:
             "browser_header_bg": "#252526",
             "browser_selected_bg": "#264f78",
             "browser_selected_fg": "#ffffff",
+            "button_bg": "#3c3c3c",
+            "button_fg": "#e0e0e0",
+            "checkbox_bg": "#2d2d30",
+            "checkbox_fg": "#e0e0e0",
         },
     }
 
@@ -468,6 +474,22 @@ class Config:
     @property
     def ui_context_bar_high(self) -> str:
         return self._parser.get("UI", "context_bar_high")
+
+    @property
+    def ui_button_bg(self) -> str:
+        return self._parser.get("UI", "button_bg")
+
+    @property
+    def ui_button_fg(self) -> str:
+        return self._parser.get("UI", "button_fg")
+
+    @property
+    def ui_checkbox_bg(self) -> str:
+        return self._parser.get("UI", "checkbox_bg")
+
+    @property
+    def ui_checkbox_fg(self) -> str:
+        return self._parser.get("UI", "checkbox_fg")
 
 
 # Instancia global de configuración.
@@ -2500,7 +2522,11 @@ class Agent:
 # Prompts fijos que el sistema inyecta para cada tipo de subtarea.
 # El LLM solo recibe el contexto del paso anterior; no decide la
 # descomposición (esa decisión la toma el orquestador).
-_SUBTASK_PROMPTS: Dict[SubtaskType, str] = {
+#
+# Estas son las plantillas POR DEFECTO. Si existe el fichero
+# ``subtareas.ini`` junto al ejecutable, las plantillas definidas allí
+# tienen prioridad y sobrescriben las correspondientes aquí.
+_DEFAULT_SUBTASK_PROMPTS: Dict[SubtaskType, str] = {
     SubtaskType.REQUIREMENTS: (
         "Eres un analista técnico. Tu única misión en esta subtarea es "
         "producir un documento de REQUISITOS TÉCNICOS para la tarea del "
@@ -2568,6 +2594,64 @@ _SUBTASK_PROMPTS: Dict[SubtaskType, str] = {
         "TAREA ORIGINAL DEL USUARIO:\n{user_prompt}"
     ),
 }
+
+
+def _load_subtask_prompts_from_ini(
+    path: str = SUBTAREAS_INI_PATH,
+) -> Optional[Dict[SubtaskType, str]]:
+    """
+    Carga las plantillas de subtareas desde ``subtareas.ini``.
+
+    El fichero debe tener una sección por cada ``SubtaskType`` (usando el
+    ``value`` del enum como nombre de sección: ``requirements``,
+    ``development``, ``execution_verification``, ``rectification``) y una
+    clave ``prompt`` con la plantilla.
+
+    Retorna ``None`` si el fichero no existe. Si existe pero está vacío o
+    no contiene ninguna sección válida, retorna un diccionario vacío.
+    """
+    if not os.path.exists(path):
+        return None
+
+    parser = configparser.ConfigParser()
+    try:
+        parser.read(path, encoding="utf-8")
+    except configparser.Error as e:
+        print(
+            f"[AVISO] Error leyendo {path}: {e}. "
+            "Usando plantillas por defecto."
+        )
+        return {}
+
+    loaded: Dict[SubtaskType, str] = {}
+    for subtask_type in SubtaskType:
+        section = subtask_type.value
+        if parser.has_section(section) and parser.has_option(section, "prompt"):
+            template = parser.get(section, "prompt").strip()
+            if template:
+                loaded[subtask_type] = template
+    return loaded
+
+
+def _build_subtask_prompts() -> Dict[SubtaskType, str]:
+    """
+    Construye el diccionario final de plantillas de subtareas.
+
+    Prioridad (de mayor a menor):
+        1. Plantillas definidas en ``subtareas.ini`` (si el fichero existe).
+        2. Plantillas por defecto definidas en ``_DEFAULT_SUBTASK_PROMPTS``.
+    """
+    prompts: Dict[SubtaskType, str] = dict(_DEFAULT_SUBTASK_PROMPTS)
+    overrides = _load_subtask_prompts_from_ini()
+    if overrides:
+        prompts.update(overrides)
+    return prompts
+
+
+# Plantillas activas que el orquestador utiliza en tiempo de ejecución.
+# Se inicializan al cargar el módulo combinando ``subtareas.ini`` (si
+# existe) con los valores por defecto.
+_SUBTASK_PROMPTS: Dict[SubtaskType, str] = _build_subtask_prompts()
 
 # Marcadores que la subtarea de verificación debe producir.
 _VERIFICATION_SUCCESS_PREFIX = "VERIFICACIÓN EXITOSA:"
@@ -3134,20 +3218,56 @@ class Dashboard:
         style.configure("Status.COMPLETED.TLabel", foreground=EVENT_STATUS_COLORS[TaskStatus.COMPLETED.value])
         style.configure("Status.FAILED.TLabel", foreground=EVENT_STATUS_COLORS[TaskStatus.FAILED.value])
         style.configure("Status.CANCELLED.TLabel", foreground=EVENT_STATUS_COLORS[TaskStatus.CANCELLED.value])
+        # Estilo base de todos los botones (los específicos heredan de aquí).
+        style.configure(
+            "TButton",
+            background=CONFIG.ui_button_bg,
+            foreground=CONFIG.ui_button_fg,
+            font=(CONFIG.ui_font_family, CONFIG.ui_font_size),
+            borderwidth=0,
+        )
+        style.map(
+            "TButton",
+            background=[
+                ("active", CONFIG.ui_button_bg),
+                ("disabled", CONFIG.ui_card_bg),
+            ],
+            foreground=[
+                ("disabled", CONFIG.ui_status_cancelled),
+            ],
+        )
         style.configure(
             "Execute.TButton",
+            background=CONFIG.ui_button_bg,
+            foreground=CONFIG.ui_button_fg,
             font=(CONFIG.ui_font_family, CONFIG.ui_font_size, "bold"),
             borderwidth=0,
         )
         style.configure(
             "Allow.TButton",
+            background=CONFIG.ui_button_bg,
+            foreground=CONFIG.ui_button_fg,
             font=(CONFIG.ui_font_family, CONFIG.ui_font_size, "bold"),
             borderwidth=0,
         )
         style.configure(
             "Deny.TButton",
+            background=CONFIG.ui_button_bg,
+            foreground=CONFIG.ui_button_fg,
             font=(CONFIG.ui_font_family, CONFIG.ui_font_size, "bold"),
             borderwidth=0,
+        )
+        # Casillas de verificación (antes no estaban configuradas).
+        style.configure(
+            "Card.TCheckbutton",
+            background=CONFIG.ui_card_bg,
+            foreground=CONFIG.ui_checkbox_fg,
+            font=(CONFIG.ui_font_family, CONFIG.ui_font_size),
+        )
+        style.map(
+            "Card.TCheckbutton",
+            background=[("active", CONFIG.ui_card_bg)],
+            foreground=[("disabled", CONFIG.ui_status_cancelled)],
         )
 
     # --- Layout ---
@@ -4459,12 +4579,246 @@ class Dashboard:
 
 
 # ============================================================================
+# POPUP DE BIENVENIDA
+# ============================================================================
+
+class WelcomeDialog:
+    """
+    Ventana modal de bienvenida que se muestra al iniciar la aplicación.
+
+    Muestra el nombre del proyecto "Hercules" en arte ASCII, el nombre del
+    desarrollador y un enlace clicable al repositorio de GitHub. El usuario
+    puede cerrar la ventana con el botón "Comenzar" o marcando la casilla
+    "No mostrar de nuevo" para que no vuelva a aparecer en futuros arranques.
+    """
+
+    PROJECT_NAME = "Hercules"
+    DEVELOPER_NAME = "Rubén Pastor"
+    GITHUB_URL = "https://github.com/bondwell79/agentes"
+    GITHUB_DISPLAY = "github.com/bondwell79/agentes"
+
+    ASCII_ART = r"""
+██╗  ██╗███████╗██████╗  ██████╗██╗   ██╗██╗     ███████╗███████╗
+██║  ██║██╔════╝██╔══██╗██╔════╝██║   ██║██║     ██╔════╝██╔════╝
+███████║█████╗  ██████╔╝██║     ██║   ██║██║     █████╗  ███████╗
+██╔══██║██╔══╝  ██╔══██╗██║     ██║   ██║██║     ██╔══╝  ╚════██║
+██║  ██║███████╗██║  ██║╚██████╗╚██████╔╝███████╗███████╗███████║
+╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝╚══════╝╚══════╝ 
+"""
+
+    def __init__(self, parent: Tk) -> None:
+        self.parent = parent
+        self.dont_show_again = BooleanVar(value=False)
+
+        self.window = Toplevel(parent)
+        self.window.title(f"Bienvenido a {self.PROJECT_NAME}")
+        self.window.resizable(False, False)
+        # Colores coherentes con el dashboard.
+        try:
+            self.window.configure(bg=CONFIG.ui_bg_color)
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Hacer la ventana modal y centrarla sobre la principal.
+        self.window.transient(parent)
+        self.window.grab_set()
+        self.window.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        self._build_layout()
+
+        # Centrar la ventana en la pantalla una vez construida.
+        self.window.update_idletasks()
+        try:
+            sw = self.window.winfo_screenwidth()
+            sh = self.window.winfo_screenheight()
+            ww = self.window.winfo_reqwidth()
+            wh = self.window.winfo_reqheight()
+            x = max(0, (sw) // 2-(ww) // 2)
+            y = max(0, (sh) // 2-(wh) // 2)
+            self.window.geometry(f"+{x}+{y}")
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Atajo: Enter y Escape cierran el diálogo.
+        self.window.bind("<Return>", lambda _e: self._on_close())
+        self.window.bind("<Escape>", lambda _e: self._on_close())
+
+    def _build_layout(self) -> None:
+        """Construye los widgets del popup de bienvenida."""
+        # Marco principal con padding.
+        try:
+            frame_bg = CONFIG.ui_card_bg
+            fg_color = CONFIG.ui_fg_color
+            mono_family = CONFIG.mono_font_family
+            mono_size = CONFIG.mono_font_size
+            font_family = CONFIG.ui_font_family
+            font_size = CONFIG.ui_font_size
+        except Exception:  # noqa: BLE001
+            frame_bg = "#2d2d30"
+            fg_color = "#e0e0e0"
+            mono_family = "Consolas"
+            mono_size = 10
+            font_family = "Segoe UI"
+            font_size = 10
+
+        outer = ttk.Frame(self.window, style="Card.TFrame", padding=24)
+        outer.pack(fill="both", expand=True)
+
+        # Arte ASCII del nombre del proyecto.
+        ascii_label = Text(
+            outer,
+            height=len(self.ASCII_ART.strip("\n").splitlines()),
+            width=max(len(line) for line in self.ASCII_ART.splitlines()),
+            font=(mono_family, mono_size + 4, "bold"),
+            bg=frame_bg,
+            fg="#4fc3f7",
+            bd=0,
+            relief="flat",
+            highlightthickness=0,
+            takefocus=0,
+            cursor="arrow",
+        )
+        ascii_label.insert("1.0", self.ASCII_ART)
+        ascii_label.configure(state="disabled")
+        ascii_label.pack(pady=(0, 12))
+
+        # Nombre del desarrollador.
+        dev_label = ttk.Label(
+            outer,
+            text=f"Desarrollado por {self.DEVELOPER_NAME}",
+            style="Card.TLabel",
+            font=(font_family, font_size + 1),
+        )
+        dev_label.pack(pady=(0, 4))
+
+        # Enlace al repositorio de GitHub (Label con cursor de mano).
+        link_frame = ttk.Frame(outer, style="Card.TFrame")
+        link_frame.pack(pady=(0, 16))
+
+        link_prefix = ttk.Label(
+            link_frame,
+            text="Repositorio: ",
+            style="Card.TLabel",
+            font=(font_family, font_size),
+        )
+        link_prefix.pack(side="left")
+
+        self._link_label = ttk.Label(
+            link_frame,
+            text=self.GITHUB_DISPLAY,
+            style="Card.TLabel",
+            foreground="#4fc3f7",
+            font=(font_family, font_size, "underline"),
+            cursor="hand2",
+        )
+        self._link_label.pack(side="left")
+        self._link_label.bind("<Button-1>", self._on_link_click)
+        self._link_label.bind("<Enter>", self._on_link_enter)
+        self._link_label.bind("<Leave>", self._on_link_leave)
+
+        # Separador visual.
+        ttk.Separator(outer, orient="horizontal").pack(fill="x", pady=(0, 12))
+
+        # Casilla "No mostrar de nuevo".
+        dont_show = ttk.Checkbutton(
+            outer,
+            text="No mostrar este mensaje al iniciar",
+            variable=self.dont_show_again,
+            style="Card.TCheckbutton",
+        )
+        dont_show.pack(anchor="w", pady=(0, 12))
+
+        # Botón "Comenzar".
+        try:
+            style_name = "Accent.TButton"
+            self.window.tk.call("ttk::style", "configure", style_name, "-foreground", fg_color)
+        except Exception:  # noqa: BLE001
+            style_name = "TButton"
+
+        button = ttk.Button(
+            outer,
+            text="Comenzar",
+            command=self._on_close,
+            style=style_name,
+        )
+        button.pack(fill="x")
+        button.focus_set()
+
+    def _on_link_click(self, _event: Any) -> None:
+        """Abre el repositorio de GitHub en el navegador predeterminado."""
+        try:
+            webbrowser.open_new_tab(self.GITHUB_URL)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror(
+                "Error al abrir el enlace",
+                f"No se pudo abrir el navegador:\n{exc}\n\nURL: {self.GITHUB_URL}",
+                parent=self.window,
+            )
+
+    def _on_link_enter(self, _event: Any) -> None:
+        try:
+            self._link_label.configure(foreground="#81d4fa")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _on_link_leave(self, _event: Any) -> None:
+        try:
+            self._link_label.configure(foreground="#4fc3f7")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _on_close(self) -> None:
+        """Cierra el diálogo y, si procede, persiste la preferencia."""
+        if self.dont_show_again.get():
+            try:
+                _save_welcome_pref(False)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[welcome] No se pudo guardar la preferencia: {exc}")
+        try:
+            self.window.grab_release()
+        except Exception:  # noqa: BLE001
+            pass
+        self.window.destroy()
+
+
+def _load_welcome_pref() -> bool:
+    """
+    Devuelve True si debe mostrarse el popup de bienvenida.
+
+    La preferencia se persiste en un fichero `.welcome` dentro del
+    directorio de trabajo. Por defecto se muestra siempre (True).
+    """
+    try:
+        pref_path = Path(CONFIG.workspace_path) / ".welcome"
+        if pref_path.exists():
+            return pref_path.read_text(encoding="utf-8").strip().lower() not in (
+                "false", "0", "no", "off"
+            )
+    except Exception:  # noqa: BLE001
+        pass
+    return True
+
+
+def _save_welcome_pref(show: bool) -> None:
+    """Persiste la preferencia del usuario sobre el popup de bienvenida."""
+    pref_path = Path(CONFIG.workspace_path) / ".welcome"
+    pref_path.parent.mkdir(parents=True, exist_ok=True)
+    pref_path.write_text("true" if show else "false", encoding="utf-8")
+
+
+# ============================================================================
 # PUNTO DE ENTRADA
 # ============================================================================
 
 def main() -> None:
     root = Tk()
     Dashboard(root)
+    # Mostrar el popup de bienvenida (a menos que el usuario lo haya desactivado).
+    try:
+        if _load_welcome_pref():
+            WelcomeDialog(root)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[welcome] No se pudo mostrar el popup de bienvenida: {exc}")
     root.mainloop()
 
 

@@ -1,0 +1,6 @@
+@echo off
+echo Activando el entorno virtual...
+call env\Scripts\activate.bat
+
+echo Ejecutando el script de Python...
+python gestor_agentes.py
