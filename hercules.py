@@ -132,6 +132,7 @@ class Config:
             "status_change_fg": "#b0bec5",
             "loop_detected_fg": "#ce93d8",
             "context_compacted_fg": "#ce93d8",
+            "context_overflow_fg": "#ff7043",
             "status_pending": "#9e9e9e",
             "status_in_progress": "#4fc3f7",
             "status_awaiting_approval": "#ffb74d",
@@ -422,6 +423,10 @@ class Config:
         return self._parser.get("UI", "context_compacted_fg")
 
     @property
+    def ui_context_overflow_fg(self) -> str:
+        return self._parser.get("UI", "context_overflow_fg")
+
+    @property
     def ui_status_pending(self) -> str:
         return self._parser.get("UI", "status_pending")
 
@@ -564,6 +569,7 @@ class EventType(str, Enum):
     INFO = "info"
     LOOP_DETECTED = "loop_detected"
     CONTEXT_COMPACTED = "context_compacted"
+    CONTEXT_OVERFLOW = "context_overflow"
     SUBTASK_CREATED = "subtask_created"
     SUBTASK_STARTED = "subtask_started"
     SUBTASK_COMPLETED = "subtask_completed"
@@ -3012,6 +3018,7 @@ EVENT_LABELS = {
     EventType.INFO.value: "ℹ Info",
     EventType.LOOP_DETECTED.value: "🔁 Bucle detectado",
     EventType.CONTEXT_COMPACTED.value: "🗜 Contexto compactado",
+    EventType.CONTEXT_OVERFLOW.value: "⚠ Desbordamiento de contexto",
     EventType.SUBTASK_CREATED.value: "➕ Subtarea creada",
     EventType.SUBTASK_STARTED.value: "▶ Subtarea iniciada",
     EventType.SUBTASK_COMPLETED.value: "✔ Subtarea completada",
@@ -3546,6 +3553,10 @@ class Dashboard:
             "context_compacted",
             foreground=CONFIG.ui_context_compacted_fg,
         )
+        self.history_view.tag_configure(
+            "context_overflow",
+            foreground=CONFIG.ui_context_overflow_fg,
+        )
         self.history_view.pack(fill="both", expand=True, pady=(6, 0))
 
         # --- Columna derecha: Explorador de ficheros del workspace ---
@@ -3871,6 +3882,7 @@ class Dashboard:
             EventType.STATUS_CHANGE: "status_change",
             EventType.LOOP_DETECTED: "loop_detected",
             EventType.CONTEXT_COMPACTED: "context_compacted",
+            EventType.CONTEXT_OVERFLOW: "context_overflow",
         }
         return mapping.get(event_type)
 
