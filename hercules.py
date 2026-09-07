@@ -2505,6 +2505,9 @@ class Agent:
                             "content": result.output,
                         }
                     )
+                    if tc.name in {"write_file", "execute_command", "delete_file"} and result.success:
+                        # refrescamos explorador de ficheros
+                        self.ui_queue.put({"type": "refresh_file_browser", "task_id": task_id})
 
                 # Publicar uso de contexto tras procesar las herramientas
                 # de esta iteración para que la UI actualice la barra.
@@ -4043,6 +4046,8 @@ class Dashboard:
             self._update_context_bar(event)
         elif etype == "approval_request":
             self._show_approval(event)
+        elif etype == "refresh_file_browser":
+            self._refresh_file_browser()
 
     def _show_approval(self, event: Dict[str, Any]) -> None:
         """
