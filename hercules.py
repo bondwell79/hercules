@@ -2056,9 +2056,10 @@ class Agent:
         self,
         task_id: int,
         messages: List[Dict[str, Any]],
+        reason: str = "bucle",
     ) -> List[Dict[str, Any]]:
         """
-        Compacta el historial de mensajes cuando se detecta un bucle.
+        Compacta el historial de mensajes.
 
         Conserva el system prompt y el prompt original del usuario, y
         reemplaza todos los mensajes intermedios por un único mensaje
@@ -2075,7 +2076,7 @@ class Agent:
         middle = messages[2:]
 
         summary_lines: List[str] = [
-            "CONTEXTO COMPACTADO: Se detectó un bucle en tus respuestas anteriores.",
+            "CONTEXTO COMPACTADO: Se han eliminado los mensajes intermedios.",
             "A continuación se resume el progreso realizado hasta ahora:",
             "",
         ]
@@ -2115,28 +2116,39 @@ class Agent:
             summary_lines.extend(f"  - {r}" for r in recent_results[-5:])
             summary_lines.append("")
 
-        summary_lines.append(
-            "IMPORTANTE: Estás atrapado en un bucle. Cambia tu estrategia "
-            "completamente. Si una herramienta falla, prueba con otra "
-            "diferente o con argumentos distintos. Si no puedes avanzar, "
-            "proporciona una respuesta final explicando qué has logrado "
-            "y qué no has podido completar."
-        )
+        if reason == "bucle":
+            summary_lines.append(
+                "IMPORTANTE: Estás atrapado en un bucle. Cambia tu estrategia "
+                "completamente. Si una herramienta falla, prueba con otra "
+                "diferente o con argumentos distintos. Si no puedes avanzar, "
+                "proporciona una respuesta final explicando qué has logrado "
+                "y qué no has podido completar."
+            )
 
         summary_msg = {
             "role": "user",
             "content": "\n".join(summary_lines),
         }
 
-        self._log(
-            task_id,
-            EventType.LOOP_DETECTED,
-            (
-                f"♻ Bucle detectado: la misma respuesta se ha repetido "
-                f"{LOOP_THRESHOLD} o más veces. Iniciando compactación "
-                f"del contexto."
-            ),
-        )
+        if reason == "bucle":
+            self._log(
+                task_id,
+                EventType.LOOP_DETECTED,
+                (
+                    f"♻ Bucle detectado: la misma respuesta se ha repetido "
+                    f"{LOOP_THRESHOLD} o más veces. Iniciando compactación "
+                    f"del contexto."
+                ),
+            )
+        if reason == "exceso_contexto":
+            self._log(
+                task_id,
+                EventType.CONTEXT_OVERFLOW,
+                (
+                    f"⚠ Contexto demasiado grande: {len(messages)} mensajes. "
+                    f"Iniciando compactación del contexto."
+                ),
+            )
         self._log(
             task_id,
             EventType.CONTEXT_COMPACTED,
@@ -2349,7 +2361,7 @@ class Agent:
                             f"Compactando preventivamente antes de enviar al modelo."
                         ),
                     )
-                    messages = self._compact_context(task_id, messages)
+                    messages = self._compact_context(task_id, messages, reason="exceso_contexto")
                     loop_detector.reset()
                     no_tool_streak = 0
                     self._publish_context_usage(task_id, messages)
@@ -2376,7 +2388,7 @@ class Agent:
                 # el contexto para permitir al modelo replantear su estrategia.
                 repeat_count = loop_detector.record(content, tool_calls)
                 if repeat_count >= LOOP_THRESHOLD:
-                    messages = self._compact_context(task_id, messages)
+                    messages = self._compact_context(task_id, messages, reason="bucle")
                     loop_detector.reset()
                     # Tras compactar, reiniciamos también el contador de
                     # "no tool_calls" para dar margen al modelo a responder
