@@ -59,6 +59,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # ============================================================================
 
 CONFIG_PATH = os.environ.get("HERCULES_CONFIG", "config.ini")
+VERSION = "Alpha 0.1.0"
 SUBTAREAS_INI_PATH = os.environ.get("HERCULES_SUBTAREAS_INI", "subtareas.ini")
 
 
@@ -3093,8 +3094,8 @@ class Dashboard:
 
     def __init__(self, root: Tk) -> None:
         self.root = root
-        self.root.title("Gestor de Agentes LLM — HITL")
-        self.root.geometry("1280x820")
+        self.root.title(f"Hercules {VERSION}")
+        self.root.geometry("1920x1080")
         # Tamaño mínimo: ancho suficiente para el tablero en 2 columnas y
         # alto suficiente para que el prompt (Zona 1) y el panel de
         # aprobación (Zona 4) queden siempre visibles aunque la ventana
@@ -4037,26 +4038,39 @@ class Dashboard:
     def _handle_event(self, event: Dict[str, Any]) -> None:
         etype = event.get("type")
         if etype == "status_change":
-            # Refrescar el tablero siempre (la tarea puede cambiar de columna).
             self._refresh_task_lists()
-
             task_id = event.get("task_id")
             new_status = event.get("status")
 
-            # Caso 1: la tarea que cambió es la que está seleccionada.
-            # → Recargar su historial para reflejar el nuevo estado.
-            if task_id == self.selected_task_id:
-                self._select_task(self.selected_task_id)
-
-            # Caso 2: la tarea terminó y NO hay nada seleccionado.
-            # → Auto-seleccionarla para que el usuario vea el resultado
-            #   sin tener que pulsar "Ver".
-            elif new_status in (
+            # Estados terminales: la tarea ya terminó y debemos saltar a la siguiente.
+            terminal_statuses = (
                 TaskStatus.COMPLETED.value,
                 TaskStatus.FAILED.value,
                 TaskStatus.CANCELLED.value,
-            ) and self.selected_task_id is None:
-                self._select_task(task_id)
+            )
+            # La tarea seleccionada terminó → saltar a la siguiente activa.
+            active_statuses = self.db.list_tasks([
+                TaskStatus.PENDING,
+                TaskStatus.IN_PROGRESS,
+                TaskStatus.AWAITING_APPROVAL,
+            ])
+
+            # --- Caso 1: la tarea que cambió es la seleccionada ---
+            if task_id == self.selected_task_id:
+                pass
+
+            # --- Caso 2: nada seleccionado y una tarea terminó ---
+            elif new_status in active_statuses or new_status in terminal_statuses:
+                # Buscar la siguiente tarea activa (no la que acaba de terminar).
+                active = self.db.list_tasks([
+                    TaskStatus.PENDING,
+                    TaskStatus.IN_PROGRESS,
+                    TaskStatus.AWAITING_APPROVAL,
+                ])
+                active_parents = [t for t in active if t.parent_task_id is None]
+                if active_parents:
+                    self._select_task(active_parents[0].id)
+                # Si no hay activas, no seleccionamos nada (se queda en "ninguna seleccionada").
         elif etype == "history_update":
             if event.get("task_id") == self.selected_task_id:
                 self._select_task(self.selected_task_id)
@@ -4631,6 +4645,7 @@ class WelcomeDialog:
     DEVELOPER_NAME = "Rubén Pastor"
     GITHUB_URL = "https://github.com/bondwell79/agentes"
     GITHUB_DISPLAY = "github.com/bondwell79/agentes"
+    Version = "Alpha 0.1.0"
 
     ASCII_ART = r"""
 ██╗  ██╗███████╗██████╗  ██████╗██╗   ██╗██╗     ███████╗███████╗
@@ -4646,7 +4661,7 @@ class WelcomeDialog:
         self.dont_show_again = BooleanVar(value=False)
 
         self.window = Toplevel(parent)
-        self.window.title(f"Bienvenido a {self.PROJECT_NAME}")
+        self.window.title(f"Bienvenido")
         self.window.resizable(False, False)
         # Colores coherentes con el dashboard.
         try:
@@ -4702,7 +4717,7 @@ class WelcomeDialog:
         # Arte ASCII del nombre del proyecto.
         ascii_label = Text(
             outer,
-            height=len(self.ASCII_ART.strip("\n").splitlines()),
+            height=len(self.ASCII_ART.strip("\n").splitlines())+1,
             width=max(len(line) for line in self.ASCII_ART.splitlines()),
             font=(mono_family, mono_size + 4, "bold"),
             bg=frame_bg,

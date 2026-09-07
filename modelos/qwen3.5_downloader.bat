@@ -1,6 +1,6 @@
 @echo off
-set "URL=https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_0.gguf"
-set "OUTPUT=Qwen3.5-4B-Q4_0.gguf"
+set "URL=https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q8_0.gguf"
+set "OUTPUT=Qwen3-4B-Instruct-2507-Q8_0.gguf"
 
 echo ========================================================
 echo   Descargando: %OUTPUT%
