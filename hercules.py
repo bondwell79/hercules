@@ -753,7 +753,8 @@ class Database:
         subtask_type: Optional[SubtaskType] = None,
         attempt_number: int = 0,
     ) -> Task:
-        now = datetime.utcnow().isoformat(timespec="seconds")
+        #now = datetime.utcnow().isoformat(timespec="seconds")
+        now = datetime.now(UTC).isoformat(timespec="seconds")
         with self._lock, self._connect() as conn:
             cur = conn.execute(
                 "INSERT INTO tasks "
@@ -790,7 +791,7 @@ class Database:
         status: TaskStatus,
         final_answer: Optional[str] = None,
     ) -> None:
-        now = datetime.utcnow().isoformat(timespec="seconds")
+        now = datetime.now(UTC).isoformat(timespec="seconds")
         with self._lock, self._connect() as conn:
             if final_answer is not None:
                 conn.execute(
