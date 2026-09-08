@@ -2,7 +2,7 @@
 """
 hercules.py
 
-Agente LLM Autónomo con Control de Permisos (HITL - Human-in-the-Loop).
+Gestor de modelos LLM con Control de Permisos (HITL - Human-in-the-Loop).
 
 Desarrollado exclusivamente con la biblioteca estándar de Python (cero dependencias externas).
 

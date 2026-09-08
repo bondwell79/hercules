@@ -21,5 +21,3 @@ if %ERRORLEVEL% equ 0 (
     echo [ERROR] La descarga fallo con codigo %ERRORLEVEL%.
     echo ========================================================
 )
-
-pause

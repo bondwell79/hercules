@@ -2,6 +2,7 @@
 /venv
 /env
 /hercules.build
+/llamacpp_win
 /hercules.db
 /hercules.dist
 /hercules.spec
