@@ -1,6 +1,6 @@
 # Hercules
 
-> Agente LLM autónomo con control de permisos humano-en-el-bucle (HITL), construido exclusivamente con la biblioteca estándar de Python.
+> Gestor de modelos LLM con control de permisos humano-en-el-bucle (HITL), construido exclusivamente con la biblioteca estándar de Python
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -27,8 +27,8 @@
 ## 🚀 Instalación rápida
 
 ```bash
-git clone https://github.com/bondwell79/agentes.git
-cd agentes
+git clone https://github.com/bondwell79/hercules.git
+cd hercules
 python hercules.py
 ```
 
