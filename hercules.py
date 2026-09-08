@@ -3143,16 +3143,15 @@ class Dashboard:
         self.selected_task_id: Optional[int] = None
         self._build_styles()
         self._build_layout()
-        self._refresh_task_lists()
-        self._poll_queue()
-
         # --- Spinner animado para tareas IN_PROGRESS ---
         # Frames del spinner en orden de rotación.
-        self._spinner_frames = ("-", "/", "|", "\\")
+        self._spinner_frames = ("-", "\\","|","/")
         self._spinner_counter = 0
         # Mapa task_id -> Label del spinner. Se rellena en
         # _render_task_row y se vacía en _refresh_task_lists.
         self._spinner_labels: Dict[int, ttk.Label] = {}
+        self._refresh_task_lists()
+        self._poll_queue()
         self._tick_spinner()
 
     def _apply_ui_config(self) -> None:
