@@ -547,7 +547,11 @@ class TaskStatus(str, Enum):
     def unfinished(cls) -> List["TaskStatus"]:
         """Estados de tareas que NO han terminado y deben limpiarse al iniciar."""
         return [s for s in cls if s not in cls.TERMINAL_STATUSES]  # type: ignore[attr-defined]  # noqa: F821
-
+    
+    @classmethod
+    def finished(cls) -> List["TaskStatus"]:
+        """Estados de tareas que han terminado y deben limpiarse al iniciar."""
+        return [s for s in cls if s in cls.TERMINAL_STATUSES]  # type: ignore[attr-defined]  # noqa: F821
 
 class RiskLevel(str, Enum):
     """Niveles de riesgo de una herramienta."""
@@ -3764,9 +3768,9 @@ class Dashboard:
         y por la FK de ``tasks.parent_task_id`` (si está definida con
         ON DELETE CASCADE en el esquema).
         """
-        terminal = list(TaskStatus.TERMINAL_STATUSES)
         try:
-            deleted = self.db.delete_tasks_by_status(terminal)
+            finished = TaskStatus.finished()
+            deleted = self.db.delete_tasks_by_status(finished)
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror(
                 "Error al borrar tareas",
