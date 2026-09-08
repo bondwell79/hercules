@@ -3830,6 +3830,30 @@ class Dashboard:
             if current is None:
                 self._select_task(None)
 
+    def _tick_spinner(self) -> None:
+        """
+        Avanza un frame del spinner animado y lo aplica a todas las
+        tareas IN_PROGRESS visibles en el tablero.
+
+        Se ejecuta de forma periódica mediante ``root.after()``,
+        independiente del polling de la cola de eventos, para que la
+        animación continúe aunque no haya eventos nuevos.
+        """
+        self._spinner_counter = (self._spinner_counter + 1) % len(self._spinner_frames)
+        frame = self._spinner_frames[self._spinner_counter]
+        # Itera sobre una copia de los valores: si _refresh_task_lists
+        # vacía el diccionario mientras estamos iterando, no hay error.
+        for label in list(self._spinner_labels.values()):
+            try:
+                label.configure(text=frame)
+            except Exception:
+                # El label pudo haber sido destruido entre el listado
+                # y el configure; lo ignoramos.
+                pass
+        # ~150 ms ≈ 6.7 fps: suficientemente suave para que se note
+        # el movimiento sin parpadeos.
+        self.root.after(150, self._tick_spinner)
+
     def _render_task_with_subtasks(
         self, parent: ttk.Frame, task: Task,
     ) -> None:
