@@ -3404,6 +3404,11 @@ class Dashboard:
             text="🧹 Limpiar",
             command=self._on_clear_prompt,
         ).pack(side="left", padx=(8, 0))
+        ttk.Button(
+            btn_row,
+            text="🗑 Borrar tareas terminadas",
+            command=self._on_delete_finished_tasks,
+        ).pack(side="left", padx=(8, 0))
         self.config_label = ttk.Label(
             btn_row,
             text=self._build_config_label_text(),
@@ -3749,6 +3754,34 @@ class Dashboard:
 
     def _on_clear_prompt(self) -> None:
         self.prompt_text.delete("1.0", "end")
+
+    def _on_delete_finished_tasks(self) -> None:
+        """
+        Elimina todas las tareas en estado terminal (COMPLETED, FAILED,
+        CANCELLED) de la base de datos y refresca el tablero.
+
+        Las subtareas se borran en cascada por la FK de la tabla ``history``
+        y por la FK de ``tasks.parent_task_id`` (si está definida con
+        ON DELETE CASCADE en el esquema).
+        """
+        terminal = list(TaskStatus.TERMINAL_STATUSES)
+        try:
+            deleted = self.db.delete_tasks_by_status(terminal)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror(
+                "Error al borrar tareas",
+                f"No se pudieron eliminar las tareas terminadas:\n{exc}",
+            )
+            return
+        self._refresh_task_lists()
+        # Si la tarea seleccionada era una de las borradas, limpia el historial.
+        if self.selected_task_id is not None:
+            if self.db.get_task(self.selected_task_id) is None:
+                self._select_task(None)
+        self.config_label.configure(
+            text=f"{deleted} tarea(s) terminada(s) eliminada(s)."
+        )
+
 
     def _on_execute(self) -> None:
         prompt = self.prompt_text.get("1.0", "end").strip()
