@@ -3146,6 +3146,15 @@ class Dashboard:
         self._refresh_task_lists()
         self._poll_queue()
 
+        # --- Spinner animado para tareas IN_PROGRESS ---
+        # Frames del spinner en orden de rotación.
+        self._spinner_frames = ("-", "/", "|", "\\")
+        self._spinner_counter = 0
+        # Mapa task_id -> Label del spinner. Se rellena en
+        # _render_task_row y se vacía en _refresh_task_lists.
+        self._spinner_labels: Dict[int, ttk.Label] = {}
+        self._tick_spinner()
+
     def _apply_ui_config(self) -> None:
         """Aplica colores, fuente y modo fullscreen desde la configuración."""
         try:
@@ -3770,6 +3779,11 @@ class Dashboard:
             for child in frame.winfo_children():
                 child.destroy()
 
+        # Las tareas que sigan IN_PROGRESS se registran de nuevo
+        # en _render_task_row; las que ya no lo estén dejan de
+        # aparecer en el diccionario.
+        self._spinner_labels.clear()
+
         active = self.db.list_tasks(
             [
                 TaskStatus.PENDING,
@@ -3849,6 +3863,20 @@ class Dashboard:
             style=status_style,
             width=18,
         ).pack(side="left")
+
+        # Spinner animado: solo aparece en tareas IN_PROGRESS.
+        # Se reutiliza el mismo estilo de color que el estado para
+        # que el símbolo vaya en el color de "IN_PROGRESS".
+        if task.status == TaskStatus.IN_PROGRESS and task.id is not None:
+            spinner = ttk.Label(
+                row,
+                text=self._spinner_frames[self._spinner_counter],
+                style=status_style,
+                width=2,
+            )
+            spinner.pack(side="left", padx=(2, 0))
+            self._spinner_labels[task.id] = spinner
+
         title_lbl = ttk.Label(
             row,
             text=task.title,
