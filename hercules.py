@@ -5068,7 +5068,7 @@ def _load_welcome_pref() -> bool:
     directorio de trabajo. Por defecto se muestra siempre (True).
     """
     try:
-        pref_path = Path(CONFIG.workspace_path) / ".welcome"
+        pref_path = SCRIPT_DIR / ".welcome"
         if pref_path.exists():
             return pref_path.read_text(encoding="utf-8").strip().lower() not in (
                 "false", "0", "no", "off"
@@ -5080,7 +5080,7 @@ def _load_welcome_pref() -> bool:
 
 def _save_welcome_pref(show: bool) -> None:
     """Persiste la preferencia del usuario sobre el popup de bienvenida."""
-    pref_path = Path(CONFIG.workspace_path) / ".welcome"
+    pref_path = SCRIPT_DIR / ".welcome"
     pref_path.parent.mkdir(parents=True, exist_ok=True)
     pref_path.write_text("true" if show else "false", encoding="utf-8")
 
