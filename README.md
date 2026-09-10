@@ -1,4 +1,4 @@
-# Hercules
+# Hercules 09/09/2026
 
 > Gestor agéntico de modelos LLM con control de permisos humano-en-el-bucle (HITL), construido exclusivamente con la biblioteca estándar de Python
 

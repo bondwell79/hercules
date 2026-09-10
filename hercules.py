@@ -101,6 +101,8 @@ class Config:
             "loop_threshold": "5",
             "max_rectification_retries": "3",
             "context_compact_threshold": "80",
+            "preauth_timeout": "15",
+            "preauth_fallback_to_human": "true",
         },
         "UI": {
             "fullscreen": "false",
@@ -280,6 +282,41 @@ class Config:
         else:
             value = self._parser.getint("Agent", "context_compact_threshold")
         return max(1, min(100, value))
+
+    @property
+    def preauth_timeout(self) -> float:
+        """
+        Timeout (en segundos) para la consulta de preautorización al LLM.
+
+        Es independiente de ``llm_timeout`` porque una decisión de
+        seguridad debe resolverse rápido: si el LLM tarda más de este
+        umbral, se considera que no ha podido decidir y se aplica el
+        fallback configurado en ``preauth_fallback_to_human``.
+        """
+        env_val = os.environ.get("HERCULES_PREAUTH_TIMEOUT")
+        if env_val:
+            try:
+                return float(env_val)
+            except ValueError:
+                return self._parser.getfloat("Agent", "preauth_timeout")
+        return self._parser.getfloat("Agent", "preauth_timeout")
+
+    @property
+    def preauth_fallback_to_human(self) -> bool:
+        """
+        Si es True (por defecto), cuando el LLM no puede decidir una
+        preautorización (timeout, error o respuesta ambigua), la
+        solicitud se encola para decisión humana en lugar de quedar
+        bloqueada o resolverse automáticamente.
+
+        Si es False, el sistema resuelve automáticamente como denegado
+        en caso de fallo del LLM (modo "fail-closed" sin intervención
+        humana).
+        """
+        env_val = os.environ.get("HERCULES_PREAUTH_FALLBACK")
+        if env_val is not None:
+            return _str_to_bool(env_val)
+        return self._parser.getboolean("Agent", "preauth_fallback_to_human")
 
     # --- UI ---
 
@@ -1891,7 +1928,16 @@ class PermissionManager:
         )
 
         # Espera síncrona hasta que la UI resuelva la aprobación.
-        event.wait(timeout=600)  # 10 minutos máximo.
+        # El timeout es una red de seguridad: la decisión real llega vía
+        # ``resolve()``. Si la preautorización está habilitada, el flujo
+        # preauth + decisión humana debería completarse en
+        # ``preauth_timeout + buffer``; si está deshabilitada, se mantiene
+        # el límite generoso de 10 minutos para decisión humana directa.
+        if CONFIG.preauth_fallback_to_human:
+            wait_timeout = max(60.0, float(CONFIG.preauth_timeout) + 30.0)
+        else:
+            wait_timeout = 600.0  # 10 minutos máximo.
+        event.wait(timeout=wait_timeout)
 
         with self._lock:
             decision = self._decisions.pop(request_id, PermissionDecision(False, "timeout"))
@@ -3028,6 +3074,9 @@ EVENT_LABELS = {
     EventType.SUBTASK_COMPLETED.value: "✔ Subtarea completada",
     EventType.SUBTASK_FAILED.value: "✘ Subtarea fallida",
     EventType.ORCHESTRATION_DECISION.value: "🎼 Decisión de orquestación",
+    EventType.PREAUTHORIZATION_REQUEST.value: "🤖 Consulta de preautorización",
+    EventType.PREAUTHORIZATION_GRANTED.value: "🤖 Preautorizado por LLM",
+    EventType.PREAUTHORIZATION_DENIED.value: "🤖 LLM denegó preautorización",
 }
 
 
@@ -3701,6 +3750,17 @@ class Dashboard:
             justify="left",
         ).pack(anchor="w", pady=(6, 6))
 
+        # Indicador de estado de preautorización: muestra "🤖 Preautorizando…"
+        # mientras el LLM está evaluando una solicitud CRITICAL. Se oculta
+        # (cadena vacía) cuando no hay preautorización en curso.
+        self.preauth_status_var = StringVar(value="")
+        ttk.Label(
+            self.approval_frame,
+            textvariable=self.preauth_status_var,
+            style="Card.TLabel",
+            foreground=CONFIG.ui_info_fg,
+        ).pack(anchor="w", pady=(0, 4))
+
         self.approval_args_view = ScrolledText(
             self.approval_frame,
             height=4,
@@ -3782,9 +3842,10 @@ class Dashboard:
         if self.selected_task_id is not None:
             if self.db.get_task(self.selected_task_id) is None:
                 self._select_task(None)
-        self.config_label.configure(
-            text=f"{deleted} tarea(s) terminada(s) eliminada(s)."
-        )
+        messagebox.showinfo(
+                "Tareas eliminadas",
+                f"{deleted} tarea(s) terminada(s) eliminada(s)."
+            )
 
 
     def _on_execute(self) -> None:
@@ -4243,6 +4304,10 @@ class Dashboard:
             self.approval_info_var.set(
                 f"🤖 Consultando al modelo sobre la seguridad de '{tool_name}'..."
             )
+            # Indicador de estado de preautorización (timeout dedicado).
+            self.preauth_status_var.set(
+                f"🤖 Preautorizando {tool_name}… (timeout {CONFIG.preauth_timeout:.0f}s)"
+            )
             self.approval_args_view.configure(
                 background=CONFIG.ui_approval_request_bg,
                 foreground=CONFIG.ui_approval_request_fg,
@@ -4296,20 +4361,59 @@ class Dashboard:
                         self._select_task(task_id)
                     self._update_approval_header()
                 else:
-                    # El LLM recomienda no autorizar: encolar para el usuario.
-                    self._log_event(
-                        task_id,
-                        EventType.PREAUTHORIZATION_DENIED,
-                        (
-                            f"🤖 LLM recomienda NO autorizar '{tool_name}'. "
-                            f"Motivo: {reason}. Pendiente de decisión del usuario."
-                        ),
-                    )
-                    self._approval_queue.append(event)
-                    if not panel_busy:
-                        self._render_current_approval()
+                    # El LLM recomienda no autorizar (o no pudo decidir).
+                    if CONFIG.preauth_fallback_to_human:
+                        # Modo por defecto: encolar para decisión humana.
+                        self._log_event(
+                            task_id,
+                            EventType.PREAUTHORIZATION_DENIED,
+                            (
+                                f"🤖 LLM recomienda NO autorizar '{tool_name}'. "
+                                f"Motivo: {reason}. Pendiente de decisión del usuario."
+                            ),
+                        )
+                        self._approval_queue.append(event)
+                        if not panel_busy:
+                            self._render_current_approval()
+                        else:
+                            self._update_approval_header()
                     else:
+                        # Fallback deshabilitado: resolver automáticamente
+                        # como denegado (modo "fail-closed" sin intervención
+                        # humana). El agente recibe la denegación y continúa.
+                        self.permissions.resolve(
+                            request_id,
+                            False,
+                            reason=f"denegado por LLM (fallback deshabilitado): {reason}",
+                        )
+                        self._log_event(
+                            task_id,
+                            EventType.PREAUTHORIZATION_DENIED,
+                            (
+                                f"🤖 LLM denegó '{tool_name}' y fallback humano "
+                                f"deshabilitado: {reason}. Acción bloqueada."
+                            ),
+                        )
+                        if not panel_busy:
+                            self.approval_info_var.set(
+                                f"🤖 Denegado por LLM (sin fallback humano): "
+                                f"'{tool_name}' — {reason}"
+                            )
+                            self.approval_args_view.configure(
+                                background=CONFIG.ui_approval_denied_bg,
+                                foreground=CONFIG.ui_approval_denied_fg,
+                            )
+                            self.approval_args_view.configure(state="normal")
+                            self.approval_args_view.delete("1.0", "end")
+                            self.approval_args_view.configure(state="disabled")
+                        self._refresh_task_lists()
+                        if task_id == self.selected_task_id:
+                            self._select_task(task_id)
                         self._update_approval_header()
+
+                # Limpiar el indicador de estado de preautorización
+                # independientemente del resultado (aprobado/denegado).
+                self.preauth_status_var.set("")
 
             try:
                 self.root.after(0, _apply_result)
@@ -4362,12 +4466,37 @@ class Dashboard:
             f"Responde SI o NO seguido de una justificación breve."
         )
 
-        response = self.llm.chat(
-            messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_msg},
-            ]
-        )
+        # Ejecutar la consulta al LLM con un timeout dedicado
+        # (``CONFIG.preauth_timeout``), independiente del timeout general
+        # de inferencia. Una decisión de seguridad debe resolverse rápido:
+        # si el LLM tarda demasiado, se considera que no ha podido decidir
+        # y se devuelve False para activar el fallback configurado.
+        response_holder: Dict[str, Any] = {}
+        error_holder: Dict[str, BaseException] = {}
+
+        def _call_llm() -> None:
+            try:
+                response_holder["response"] = self.llm.chat(
+                    messages=[
+                        {"role": "system", "content": system_msg},
+                        {"role": "user", "content": user_msg},
+                    ]
+                )
+            except BaseException as e:  # noqa: BLE001
+                error_holder["error"] = e
+
+        worker = threading.Thread(target=_call_llm, daemon=True)
+        worker.start()
+        timeout_s = max(1.0, float(CONFIG.preauth_timeout))
+        worker.join(timeout=timeout_s)
+
+        if worker.is_alive():
+            # El LLM no respondió a tiempo. Por seguridad, no preautorizar.
+            return False, f"timeout ({timeout_s:.0f}s) sin respuesta del LLM"
+        if "error" in error_holder:
+            err = error_holder["error"]
+            return False, f"error del LLM: {type(err).__name__}: {err}"
+        response = response_holder.get("response", {})
         content = (
             response.get("choices", [{}])[0]
             .get("message", {})
