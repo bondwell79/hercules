@@ -103,6 +103,7 @@ class Config:
             "context_compact_threshold": "80",
             "preauth_timeout": "15",
             "preauth_fallback_to_human": "true",
+            "no_authorization": "false",
         },
         "UI": {
             "fullscreen": "false",
@@ -317,6 +318,20 @@ class Config:
         if env_val is not None:
             return _str_to_bool(env_val)
         return self._parser.getboolean("Agent", "preauth_fallback_to_human")
+
+    @property
+    def no_authorization(self) -> bool:
+        """
+        Si es True, todas las solicitudes de aprobación humana se conceden
+        automáticamente sin consultar al usuario ni al LLM.
+
+        Pensado para entornos de prueba/desarrollo. NO usar en producción:
+        elimina por completo la barrera de seguridad HITL.
+        """
+        env_val = os.environ.get("HERCULES_NO_AUTHORIZATION")
+        if env_val is not None:
+            return _str_to_bool(env_val)
+        return self._parser.getboolean("Agent", "no_authorization")
 
     # --- UI ---
 
@@ -1909,6 +1924,13 @@ class PermissionManager:
 
         Publica un evento en la cola de la UI y espera la decisión.
         """
+        # Bypass total: no se requiere autorización humana ni del LLM.
+        if CONFIG.no_authorization:
+            return PermissionDecision(
+                True,
+                "autorización omitida por configuración (no_authorization=true)",
+            )
+
         request_id = uuid.uuid4().hex
         event = threading.Event()
         with self._lock:
@@ -2676,8 +2698,8 @@ def _load_subtask_prompts_from_ini(
     Carga las plantillas de subtareas desde ``subtareas.ini``.
 
     El fichero debe tener una sección por cada ``SubtaskType`` (usando el
-    ``value`` del enum como nombre de sección: ``requirements``,
-    ``development``, ``execution_verification``, ``rectification``) y una
+    ``value`` del enum como nombre de sección: ``REQUIREMENTS``,
+    ``DEVELOPMENT``, ``EXECUTION_VERIFICATION``, ``RECTIFICATION``) y una
     clave ``prompt`` con la plantilla.
 
     Retorna ``None`` si el fichero no existe. Si existe pero está vacío o
@@ -4257,6 +4279,23 @@ class Dashboard:
         en el panel (el hilo del agente correspondiente quedaría esperando
         hasta el timeout de 10 minutos).
         """
+        # Bypass total: resolver directamente sin preauth ni cola de UI.
+        if CONFIG.no_authorization:
+            self.permissions.resolve(
+                event["request_id"],
+                True,
+                reason="autorización omitida por configuración (no_authorization=true)",
+            )
+            self._log_event(
+                event["task_id"],
+                EventType.APPROVAL_GRANTED,
+                f"⚠ Autorización omitida por configuración: '{event['tool_name']}'",
+            )
+            self._refresh_task_lists()
+            if event["task_id"] == self.selected_task_id:
+                self._select_task(event["task_id"])
+            return
+
         # Si la casilla "preautorizar" está marcada, se consulta al LLM
         # en segundo plano antes de mostrar la solicitud al usuario.
         if self.preauth_var.get():
