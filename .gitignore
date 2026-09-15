@@ -1,6 +1,7 @@
 /.venv
 /venv
 /env
+/binarios
 /hercules.build
 /llamacpp_win
 /hercules.db
