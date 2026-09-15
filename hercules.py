@@ -59,7 +59,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # ============================================================================
 
 CONFIG_PATH = os.environ.get("HERCULES_CONFIG", "config.ini")
-VERSION = "Alpha 0.1.0"
+VERSION = "Alpha 0.2.0"
 SUBTAREAS_INI_PATH = os.environ.get("HERCULES_SUBTAREAS_INI", "subtareas.ini")
 
 
