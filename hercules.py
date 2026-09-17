@@ -3178,7 +3178,20 @@ class TaskOrchestrator:
         otro contenido se considera fallo (por seguridad).
         """
         text = verification_output.strip()
-        return text.startswith(_VERIFICATION_SUCCESS_PREFIX)
+        verificacion_estado = None
+
+        if text.startswith(_VERIFICATION_FAILURE_PREFIX):
+            verificacion_estado = False
+        if text.startswith(_VERIFICATION_SUCCESS_PREFIX):
+            verificacion_estado = True
+        if verificacion_estado is None:
+            # No se reconoce el prefijo:busamos en todo el texto.
+            if _VERIFICATION_SUCCESS_PREFIX in text:
+                verificacion_estado = True
+            elif _VERIFICATION_FAILURE_PREFIX in text:
+                verificacion_estado = False
+
+        return verificacion_estado
 
     def _complete_parent(self, parent_id: int, final_answer: str) -> None:
         """Marca la tarea padre como COMPLETED con la respuesta final."""
