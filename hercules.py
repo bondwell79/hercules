@@ -28,17 +28,14 @@ Configuración mediante variables de entorno:
 
 from __future__ import annotations
 import re
-import shlex
 import collections
 import configparser
 import json
 import os
 import queue
-import shlex
 import sqlite3
 import subprocess
 import threading
-import time
 from datetime import UTC, datetime
 import traceback
 import urllib.error
