@@ -27,7 +27,8 @@ Configuración mediante variables de entorno:
 """
 
 from __future__ import annotations
-
+import re
+import shlex
 import collections
 import configparser
 import json
@@ -59,9 +60,100 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # ============================================================================
 
 CONFIG_PATH = os.environ.get("HERCULES_CONFIG", "config.ini")
-VERSION = "Alpha 0.1.0"
+VERSION = "Alpha 0.2.0"
 SUBTAREAS_INI_PATH = os.environ.get("HERCULES_SUBTAREAS_INI", "subtareas.ini")
 
+# Patrones peligrosos organizados por categoría.
+# Cada entrada: (regex compilado, razón legible, severidad).
+_DANGEROUS_PATTERNS: List[Tuple[re.Pattern, str, str]] = [
+    # --- Destrucción masiva de archivos ---
+    (re.compile(r'\brm\s+(-\w*r\w*f|-\w*f\w*r|-rf|-fr)\b\s+/', re.I),
+     "Eliminación recursiva forzada desde raíz", "CRITICAL"),
+    (re.compile(r'\brm\s+(-\w*r\w*f|-\w*f\w*r|-rf|-fr)\b\s+~', re.I),
+     "Eliminación recursiva forzada del home", "CRITICAL"),
+    (re.compile(r'\bdel\s+.*(/s|/q|/f)', re.I),
+     "Eliminación recursiva Windows", "CRITICAL"),
+    (re.compile(r'\brd\s+.*(/s|/q)', re.I),
+     "Eliminación de directorio Windows", "CRITICAL"),
+    (re.compile(r'\bRemove-Item\s+.*(-Recurse|-Force)', re.I),
+     "Eliminación recursiva PowerShell", "CRITICAL"),
+    
+    # --- Operaciones de disco ---
+    (re.compile(r'\b(format|mkfs|mkfs\.\w+|mkswap|fdisk|parted)\b\s+', re.I),
+     "Operación destructiva de disco", "CRITICAL"),
+    (re.compile(r'\bdd\s+.*of=/dev/(sd|hd|nvme|mmcblk|xvd)', re.I),
+     "Escritura directa a dispositivo de bloque", "CRITICAL"),
+    
+    # --- Control del sistema ---
+    (re.compile(r'\b(shutdown|halt|poweroff|reboot|restart)\b', re.I),
+     "Apagado/reinicio del sistema", "CRITICAL"),
+    (re.compile(r'\binit\s+[016]\b', re.I),
+     "Cambio de runlevel", "CRITICAL"),
+    (re.compile(r'\bsystemctl\s+(poweroff|reboot|halt)', re.I),
+     "Apagado vía systemd", "CRITICAL"),
+    
+    # --- Escalada de privilegios ---
+    (re.compile(r'\b(sudo|doas)\s+', re.I),
+     "Escalada de privilegios", "HIGH"),
+    (re.compile(r'\bsu\s+(-c\s+)?', re.I),
+     "Cambio de usuario", "HIGH"),
+    (re.compile(r'\bchmod\s+[0-7]*[sS]\b', re.I),
+     "Asignación de SUID/SGID", "HIGH"),
+    
+    # --- Pipes a intérpretes (ejecución remota) ---
+    (re.compile(r'\b(curl|wget|fetch)\s+.*\|\s*(sh|bash|zsh|python|perl|ruby|node)', re.I),
+     "Ejecución de código remoto vía pipe", "CRITICAL"),
+    (re.compile(r'\b(curl|wget)\s+.*-o\s+-\s*\|\s*(sh|bash)', re.I),
+     "Descarga y ejecución inmediata", "CRITICAL"),
+    
+    # --- Fork bomb ---
+    (re.compile(r':\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:', re.I),
+     "Fork bomb", "CRITICAL"),
+    
+    # --- Modificación de archivos del sistema ---
+    (re.compile(r'(>>?)\s*(/etc/|/boot/|/proc/|/sys/|/dev/)', re.I),
+     "Escritura en directorio del sistema", "CRITICAL"),
+    (re.compile(r'\btee\s+(/etc/|/boot/|/proc/|/sys/)', re.I),
+     "Escritura en directorio del sistema", "CRITICAL"),
+    
+    # --- Modificación de Windows system ---
+    (re.compile(r'(>>?)\s*(C:\\Windows\\|C:\\System32\\|C:\\Program Files\\)', re.I),
+     "Escritura en directorio del sistema Windows", "CRITICAL"),
+    
+    # --- Red y exfiltración ---
+    (re.compile(r'\bnc\s+.*-[el]', re.I),
+     "Netcat en modo listener/ejecución", "HIGH"),
+    (re.compile(r'\bssh\s+.*@.*\s+(rm|dd|mkfs)', re.I),
+     "Comando destructivo vía SSH remoto", "CRITICAL"),
+    
+    # --- Cron y persistencia ---
+    (re.compile(r'\bcrontab\s+-[elr]\b', re.I),
+     "Modificación de cron", "HIGH"),
+    (re.compile(r'\b(systemctl|service)\s+(enable|disable|mask)\b', re.I),
+     "Modificación de servicios del sistema", "MEDIUM"),
+    
+    # --- Gestión de usuarios ---
+    (re.compile(r'\b(useradd|userdel|passwd|chpasswd)\b', re.I),
+     "Modificación de usuarios", "HIGH"),
+    
+    # --- Firewall/red ---
+    (re.compile(r'\b(iptables|ufw|firewalld|nft)\s+.*(-F|--flush|reset)', re.I),
+     "Reset de firewall", "HIGH"),
+    
+    # --- Git destructivo ---
+    (re.compile(r'\bgit\s+(push\s+.*--force|reset\s+--hard)', re.I),
+     "Operación destructiva de git", "MEDIUM"),
+    
+    # --- Base64 + ejecución ---
+    (re.compile(r'\bbase64\s+.*(-d|--decode)\s*\|\s*(sh|bash)', re.I),
+     "Ejecución de código decodificado", "CRITICAL"),
+]
+
+# Paths críticos que nunca deben ser objetivo de escritura/borrado.
+_CRITICAL_PATH_PATTERNS: List[re.Pattern] = [
+    re.compile(r'(>>?|rm\s+.*|del\s+.*|rd\s+.*)\s*[/\\]?(etc|boot|proc|sys|dev)([/\\]|$)', re.I),
+    re.compile(r'(>>?|rm\s+.*|del\s+.*|rd\s+.*)\s*C:[/\\](Windows|System32|Program Files)', re.I),
+]
 
 def _str_to_bool(value: str) -> bool:
     """Convierte una cadena a booleano (true/1/yes -> True)."""
@@ -104,6 +196,7 @@ class Config:
             "preauth_timeout": "15",
             "preauth_fallback_to_human": "true",
             "no_authorization": "false",
+            "command_timeout": "120",
         },
         "UI": {
             "fullscreen": "false",
@@ -332,6 +425,23 @@ class Config:
         if env_val is not None:
             return _str_to_bool(env_val)
         return self._parser.getboolean("Agent", "no_authorization")
+
+    @property
+    def command_timeout(self) -> float:
+        """
+        Timeout (en segundos) para la ejecución de comandos del sistema
+        invocados por la herramienta ``execute_command``.
+
+        Si el comando tarda más de este umbral, `subprocess.run` lanza
+        `TimeoutExpired` y la herramienta devuelve un error al modelo.
+        """
+        env_val = os.environ.get("HERCULES_COMMAND_TIMEOUT")
+        if env_val:
+            try:
+                return float(env_val)
+            except ValueError:
+                return self._parser.getfloat("Agent", "command_timeout")
+        return self._parser.getfloat("Agent", "command_timeout")
 
     # --- UI ---
 
@@ -569,6 +679,7 @@ LLM_TIMEOUT = CONFIG.llm_timeout
 LLM_N_CTX = CONFIG.llm_n_ctx
 LLM_N_THREADS = CONFIG.llm_n_threads
 LLM_N_GPU_LAYERS = CONFIG.llm_n_gpu_layers
+COMMAND_TIMEOUT = CONFIG.command_timeout
 
 # Directorio del script (para resolver rutas relativas como modelos/).
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -1654,6 +1765,63 @@ def tool_write_file(args: Dict[str, Any]) -> str:
         return f"ERROR al escribir {path}: {e}"
     return f"OK: escrito {len(content)} caracteres en {path}"
 
+def _tokenize_command(command: str) -> List[str]:
+    """
+    Divide un comando en segmentos independientes respetando chaining
+    operators (;, &&, ||, |) y subshells ($(...), `...`).
+    Cada segmento se analiza por separado.
+    """
+    # Primero extraer subshells para analizarlos recursivamente
+    subshells = re.findall(r'\$\(([^)]*)\)', command)
+    backticks = re.findall(r'`([^`]*)`', command)
+    
+    # Dividir por chaining operators (respetando comillas es complejo,
+    # pero para detección de patrones es suficiente)
+    segments = re.split(r'[;&|]+', command)
+    return [s.strip() for s in segments if s.strip()]
+
+def _is_command_safe(command: str) -> Tuple[bool, str]:
+    """
+    Analiza un comando y devuelve (es_seguro, razón_si_no).
+    
+    Estrategia:
+        1. Detectar y analizar subshells recursivamente.
+        2. Dividir por chaining operators y analizar cada segmento.
+        3. Comprobar patrones peligrosos (regex).
+        4. Comprobar paths críticos.
+        5. Detectar encoding + ejecución.
+    """
+    if not command or not command.strip():
+        return False, "Comando vacío"
+    
+    # 1. Subshells: extraer y analizar recursivamente.
+    for subshell in re.findall(r'\$\(([^)]*)\)', command):
+        safe, reason = _is_command_safe(subshell)
+        if not safe:
+            return False, f"Subshell peligroso: {reason}"
+    for subshell in re.findall(r'`([^`]*)`', command):
+        safe, reason = _is_command_safe(subshell)
+        if not safe:
+            return False, f"Backtick peligroso: {reason}"
+    
+    # 2. Dividir por chaining y analizar cada segmento.
+    segments = re.split(r'[;&|]+', command)
+    for segment in segments:
+        segment = segment.strip()
+        if not segment:
+            continue
+        
+        # 3. Comprobar patrones peligrosos.
+        for pattern, reason, severity in _DANGEROUS_PATTERNS:
+            if pattern.search(segment):
+                return False, f"[{severity}] {reason}"
+        
+        # 4. Comprobar paths críticos.
+        for path_pattern in _CRITICAL_PATH_PATTERNS:
+            if path_pattern.search(segment):
+                return False, f"[CRITICAL] Acceso a path del sistema: {segment[:80]}"
+    
+    return True, ""
 
 def tool_execute_command(args: Dict[str, Any]) -> str:
     """
@@ -1664,12 +1832,10 @@ def tool_execute_command(args: Dict[str, Any]) -> str:
     if not command:
         return "ERROR: 'command' es obligatorio"
 
-    # Lista de denegación básica de comandos destructivos.
-    denied = ["rm -rf /", "format", "del /f /s /q", "shutdown", "reboot"]
-    lowered = command.lower()
-    for d in denied:
-        if d in lowered:
-            return f"ERROR: comando bloqueado por política de seguridad: '{d}'"
+    # Validación robusta de seguridad.
+    safe, reason = _is_command_safe(command)
+    if not safe:
+        return f"ERROR: comando bloqueado por política de seguridad: {reason}"
 
     try:
         # cwd restringido al workspace.
@@ -1679,10 +1845,10 @@ def tool_execute_command(args: Dict[str, Any]) -> str:
             cwd=str(WORKSPACE_DIR),
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=COMMAND_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
-        return "ERROR: timeout (30s) ejecutando el comando"
+        return f"ERROR: timeout ({COMMAND_TIMEOUT:g}s) ejecutando el comando"
     except Exception as e:  # noqa: BLE001
         return f"ERROR al ejecutar comando: {e}"
 
