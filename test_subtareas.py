@@ -147,17 +147,25 @@ class ScriptedLLM:
         self._lock = threading.Lock()
 
     def _detect_subtask(self, messages: List[Dict[str, Any]]) -> str:
-        """Detecta qué subtarea se está ejecutando por el contenido del prompt."""
+        """
+        Detecta qué subtarea se está ejecutando por el contenido del prompt.
+
+        Usa marcadores robustos que están presentes tanto en las plantillas
+        por defecto (``_DEFAULT_SUBTASK_PROMPTS``) como en las plantillas
+        personalizadas cargadas desde ``subtareas.ini``. El orden de las
+        comprobaciones es importante: ``RECTIFICATION`` se evalúa primero
+        porque su prompt también contiene la palabra "desarrollador".
+        """
         if len(messages) < 2:
             return "UNKNOWN"
-        user_msg = messages[1].get("content", "")
-        if "NO ejecutes ninguna acción" in user_msg:
-            return "REQUIREMENTS"
-        if "modo corrección" in user_msg.lower():
+        user_msg_lower = messages[1].get("content", "").lower()
+        if "modo corrección" in user_msg_lower:
             return "RECTIFICATION"
-        if "verificador" in user_msg.lower() and "SOLUCIÓN IMPLEMENTADA" in user_msg:
+        if "verificador" in user_msg_lower:
             return "EXECUTION_VERIFICATION"
-        if "desarrollador" in user_msg.lower() and "REQUISITOS TÉCNICOS" in user_msg:
+        if "analista técnico" in user_msg_lower:
+            return "REQUIREMENTS"
+        if "desarrollador" in user_msg_lower:
             return "DEVELOPMENT"
         return "UNKNOWN"
 
@@ -195,8 +203,23 @@ class ScriptedLLM:
                 self._call_counters[subtask] = 0
             script_key = self._resolve_script_key(subtask)
             if script_key is None:
-                return _final_response("(sin más respuestas)")
+                # Sin entrada en el guion: simular un error del LLM para
+                # que el Agent marque la subtarea como FAILED y el
+                # orquestador aborte el flujo en lugar de continuar con
+                # respuestas vacías.
+                raise ga.LLMError(
+                    f"ScriptedLLM: no hay guion configurado para la "
+                    f"subtarea '{subtask}'."
+                )
             responses = self.script[script_key]
+            if not responses:
+                # Guion vacío: el agente no tiene respuestas para esta
+                # subtarea. Lanzar LLMError para que el Agent la marque
+                # como FAILED (en lugar de aceptar un texto vacío como
+                # respuesta final).
+                raise ga.LLMError(
+                    f"ScriptedLLM: el guion para '{subtask}' está vacío."
+                )
             idx = self._call_counters.get(subtask, 0)
             if idx >= len(responses):
                 # Guion agotado: repetir la última respuesta.

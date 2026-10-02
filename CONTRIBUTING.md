@@ -2,7 +2,7 @@
 
 ## Reportar bugs
 
-Abre un [issue](https://github.com/ruben-pastor/gestor-agentes/issues) con:
+Abre un [issue](https://github.com/bondwell79/hercules/issues) con:
 - Pasos para reproducir.
 - Salida esperada vs. obtenida.
 - Versión de Python y SO.
@@ -27,7 +27,9 @@ Antes de enviar un PR:
 python test_global.py
 ```
 
-Ejecuta las 3 suites (`test_resilience.py`, `test_funcionamiento.py`, `test_subtareas.py`); todas deben pasar al 100%. Añade tests para cualquier bug que corrijas.
+Ejecuta las 8 suites (resiliencia, funcionamiento, subtareas, imports/widgets/layout de UI, barra de título y diálogo de bienvenida); todas deben pasar al 100%. Añade tests para cualquier bug que corrijas.
+
+Si añades una suite nueva, regístrala en la lista `SUITES` de `test_global.py`.
 
 ## Contacto
 

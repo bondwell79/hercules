@@ -35,6 +35,7 @@ import os
 import queue
 import sqlite3
 import subprocess
+import sys
 import threading
 from datetime import UTC, datetime
 import traceback
@@ -43,11 +44,10 @@ import urllib.request
 import uuid
 import webbrowser
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from tkinter import BooleanVar, Canvas, Tk, StringVar, Text, Toplevel, messagebox, ttk
+from tkinter import BooleanVar, Canvas, Frame, Label as TkLabel, Tk, StringVar, Text, Toplevel, colorchooser, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -197,72 +197,125 @@ class Config:
         },
         "UI": {
             "fullscreen": "false",
-            "bg_color": "#1e1e1e",
-            "fg_color": "#e0e0e0",
-            "frame_bg": "#252526",
-            "card_bg": "#2d2d30",
-            "prompt_bg": "#1e1e1e",
-            "prompt_fg": "#e0e0e0",
-            "history_bg": "#1e1e1e",
-            "history_fg": "#d4d4d4",
-            "approval_bg": "#1e1e1e",
-            "approval_fg": "#b6eea8",
-            "approval_request_bg": "#1e1e1e",
-            "approval_request_fg": "#a88647",
-            "approval_granted_bg": "#1e1e1e",
-            "approval_granted_fg": "#388e3c",
-            "approval_denied_bg": "#1e1e1e",
-            "approval_denied_fg": "#d32f2f",
-            "final_answer_fg": "#4caf50",
-            "thought_fg": "#e65100",
-            "info_fg": "#fbc02d",
-            "tool_call_fg": "#4fc3f7",
-            "tool_result_fg": "#80cbc4",
-            "approval_request_fg": "#ffb74d",
-            "approval_granted_fg": "#66bb6a",
-            "approval_denied_fg": "#ef5350",
-            "error_fg": "#ef5350",
-            "status_change_fg": "#b0bec5",
-            "loop_detected_fg": "#ce93d8",
-            "context_compacted_fg": "#ce93d8",
-            "context_overflow_fg": "#ff7043",
-            "status_pending": "#9e9e9e",
-            "status_in_progress": "#4fc3f7",
-            "status_awaiting_approval": "#ffb74d",
-            "status_completed": "#66bb6a",
-            "status_failed": "#ef5350",
-            "status_cancelled": "#9e9e9e",
+            "bg_color": "#0f1115",
+            "fg_color": "#e6e8eb",
+            "frame_bg": "#14171c",
+            "card_bg": "#1a1d23",
+            "prompt_bg": "#12141a",
+            "prompt_fg": "#e6e8eb",
+            "history_bg": "#12141a",
+            "history_fg": "#d1d5db",
+            "approval_bg": "#12141a",
+            "approval_fg": "#86efac",
+            "approval_request_bg": "#12141a",
+            "approval_request_fg": "#fbbf24",
+            "approval_granted_bg": "#12141a",
+            "approval_granted_fg": "#34d399",
+            "approval_denied_bg": "#12141a",
+            "approval_denied_fg": "#f87171",
+            "final_answer_fg": "#4ade80",
+            "thought_fg": "#fdba74",
+            "info_fg": "#fbbf24",
+            "tool_call_fg": "#60a5fa",
+            "tool_result_fg": "#5eead4",
+            "error_fg": "#f87171",
+            "status_change_fg": "#94a3b8",
+            "loop_detected_fg": "#c4b5fd",
+            "context_compacted_fg": "#c4b5fd",
+            "context_overflow_fg": "#fb7185",
+            "status_pending": "#9ca3af",
+            "status_in_progress": "#60a5fa",
+            "status_awaiting_approval": "#fbbf24",
+            "status_completed": "#4ade80",
+            "status_failed": "#f87171",
+            "status_cancelled": "#6b7280",
             "font_family": "Segoe UI",
             "font_size": "10",
             "mono_font_family": "Consolas",
             "mono_font_size": "10",
-            "context_bar_bg": "#e0e0e0",
-            "context_bar_low": "#4caf50",
-            "context_bar_medium": "#ff9800",
-            "context_bar_high": "#f44336",
-            "browser_bg": "#2d2d30",
-            "browser_fg": "#e0e0e0",
-            "browser_header_bg": "#252526",
-            "browser_selected_bg": "#264f78",
+            "context_bar_bg": "#2a2e37",
+            "context_bar_low": "#4ade80",
+            "context_bar_medium": "#fbbf24",
+            "context_bar_high": "#f87171",
+            "browser_bg": "#1a1d23",
+            "browser_fg": "#e6e8eb",
+            "browser_header_bg": "#14171c",
+            "browser_selected_bg": "#1e3a5f",
             "browser_selected_fg": "#ffffff",
-            "button_bg": "#3c3c3c",
-            "button_fg": "#e0e0e0",
-            "checkbox_bg": "#2d2d30",
-            "checkbox_fg": "#e0e0e0",
+            "browser_border": "#2a2e37",
+            "button_bg": "#272b33",
+            "button_fg": "#e6e8eb",
+            "checkbox_bg": "#1a1d23",
+            "checkbox_fg": "#e6e8eb",
+            "scrollbar_trough": "#14171c",
+            "scrollbar_thumb": "#3a3f4b",
+            "scrollbar_thumb_hover": "#4b5160",
+            "scrollbar_arrow": "#9ca3af",
+            "tab_bg": "#12141a",
+            "tab_fg": "#9ca3af",
+            "tab_hover_bg": "#1f232a",
+            "tab_selected_bg": "#1a1d23",
+            "tab_selected_fg": "#60a5fa",
+            "separator_color": "#2a2e37",
+            # --- Opciones de interfaz moderna (transparencias, esquinas redondeadas) ---
+            "corner_radius": "10",
+            "window_alpha": "1.0",
+            "button_hover_bg": "#343944",
+            "button_pressed_bg": "#1d2026",
+            "button_accent_bg": "#3b82f6",
+            "button_accent_fg": "#ffffff",
+            "button_accent_hover_bg": "#60a5fa",
+            "button_accent_pressed_bg": "#2563eb",
+            "button_danger_bg": "#dc2626",
+            "button_danger_fg": "#ffffff",
+            "button_danger_hover_bg": "#ef4444",
+            "button_danger_pressed_bg": "#b91c1c",
+            "card_border_color": "#2a2e37",
+            "card_border_width": "1",
+            "card_shadow_color": "#000000",
+            "accent_color": "#60a5fa",
+            "gradient_enabled": "true",
+            "hover_animation_ms": "80",
+            # --- Barra de título moderna (Windows 10/11) ---
+            # Estilo: "system" (por defecto), "dark" (modo oscuro nativo),
+            # "accent" (color de acento del sistema), "custom" (color propio).
+            "titlebar_style": "dark",
+            # Color de fondo de la barra de título cuando titlebar_style="custom".
+            # Acepta "#rrggbb" (Windows 11 22H2+) o "system" para usar el color
+            # de acento del sistema.
+            "titlebar_color": "#0f1115",
+            # Color del texto/iconos de la barra de título cuando
+            # titlebar_style="custom". Acepta "#rrggbb" o "system".
+            "titlebar_text_color": "#e6e8eb",
+            # --- Barra de título personalizada (overrideredirect) ---
+            # Si es true, reemplaza la barra nativa por una barra
+            # tkinter con botones minimizar/maximizar/cerrar y estilo
+            # moderno minimalista.
+            "custom_titlebar": "true",
+            # Altura en píxeles de la barra personalizada (20-60).
+            "custom_titlebar_height": "32",
         },
     }
 
     def __init__(self, path: str = CONFIG_PATH) -> None:
         self._path = path
+        self.reload()
+
+    @property
+    def path(self) -> str:
+        return self._path
+
+    def reload(self) -> None:
+        """Relee los valores por defecto y el fichero de configuración."""
         self._parser = configparser.ConfigParser()
         # Cargar valores por defecto primero.
         self._parser.read_dict(self.DEFAULTS)
         # Sobrescribir con config.ini si existe.
-        if os.path.exists(path):
+        if os.path.exists(self._path):
             try:
-                self._parser.read(path, encoding="utf-8")
+                self._parser.read(self._path, encoding="utf-8")
             except configparser.Error as e:
-                print(f"[AVISO] Error leyendo {path}: {e}. Usando valores por defecto.")
+                print(f"[AVISO] Error leyendo {self._path}: {e}. Usando valores por defecto.")
 
     # --- LLM ---
 
@@ -554,18 +607,6 @@ class Config:
         return self._parser.get("UI", "tool_result_fg")
 
     @property
-    def ui_approval_request_fg(self) -> str:
-        return self._parser.get("UI", "approval_request_fg")
-
-    @property
-    def ui_approval_granted_fg(self) -> str:
-        return self._parser.get("UI", "approval_granted_fg")
-
-    @property
-    def ui_approval_denied_fg(self) -> str:
-        return self._parser.get("UI", "approval_denied_fg")
-
-    @property
     def ui_error_fg(self) -> str:
         return self._parser.get("UI", "error_fg")
 
@@ -642,6 +683,10 @@ class Config:
         return self._parser.get("UI", "context_bar_high")
 
     @property
+    def ui_browser_border(self) -> str:
+        return self._parser.get("UI", "browser_border")
+
+    @property
     def ui_button_bg(self) -> str:
         return self._parser.get("UI", "button_bg")
 
@@ -656,6 +701,219 @@ class Config:
     @property
     def ui_checkbox_fg(self) -> str:
         return self._parser.get("UI", "checkbox_fg")
+
+    @property
+    def ui_scrollbar_trough(self) -> str:
+        return self._parser.get("UI", "scrollbar_trough")
+
+    @property
+    def ui_scrollbar_thumb(self) -> str:
+        return self._parser.get("UI", "scrollbar_thumb")
+
+    @property
+    def ui_scrollbar_thumb_hover(self) -> str:
+        return self._parser.get("UI", "scrollbar_thumb_hover")
+
+    @property
+    def ui_scrollbar_arrow(self) -> str:
+        return self._parser.get("UI", "scrollbar_arrow")
+
+    @property
+    def ui_tab_bg(self) -> str:
+        return self._parser.get("UI", "tab_bg")
+
+    @property
+    def ui_tab_fg(self) -> str:
+        return self._parser.get("UI", "tab_fg")
+
+    @property
+    def ui_tab_hover_bg(self) -> str:
+        return self._parser.get("UI", "tab_hover_bg")
+
+    @property
+    def ui_tab_selected_bg(self) -> str:
+        return self._parser.get("UI", "tab_selected_bg")
+
+    @property
+    def ui_tab_selected_fg(self) -> str:
+        return self._parser.get("UI", "tab_selected_fg")
+
+    @property
+    def ui_separator_color(self) -> str:
+        return self._parser.get("UI", "separator_color")
+
+    # --- Opciones de interfaz moderna ---
+
+    @property
+    def ui_corner_radius(self) -> int:
+        """Radio de las esquinas redondeadas (en píxeles)."""
+        try:
+            return max(0, self._parser.getint("UI", "corner_radius"))
+        except (ValueError, configparser.Error):
+            return 10
+
+    @property
+    def ui_window_alpha(self) -> float:
+        """Transparencia de la ventana principal (0.5 - 1.0)."""
+        env_val = os.environ.get("HERCULES_WINDOW_ALPHA")
+        if env_val is not None:
+            try:
+                return max(0.5, min(1.0, float(env_val)))
+            except ValueError:
+                pass
+        try:
+            return max(0.5, min(1.0, self._parser.getfloat("UI", "window_alpha")))
+        except (ValueError, configparser.Error):
+            return 1.0
+
+    @property
+    def ui_titlebar_style(self) -> str:
+        """
+        Estilo de la barra de título nativa de Windows.
+
+        Valores aceptados:
+          - "system": barra de título nativa sin cambios (aspecto clásico).
+          - "dark": modo oscuro nativo (texto/iconos blancos sobre fondo
+            oscuro del sistema). Funciona en Windows 10 1903+ y Windows 11.
+          - "accent": usa el color de acento del sistema como fondo de la
+            barra de título (Windows 11 22H2+).
+          - "custom": usa los colores definidos en ``ui_titlebar_color`` y
+            ``ui_titlebar_text_color`` (Windows 11 22H2+).
+        """
+        env_val = os.environ.get("HERCULES_TITLEBAR_STYLE")
+        if env_val:
+            return env_val.strip().lower()
+        try:
+            return self._parser.get("UI", "titlebar_style").strip().lower()
+        except (configparser.Error, ValueError):
+            return "system"
+
+    @property
+    def ui_titlebar_color(self) -> str:
+        """Color de fondo de la barra de título cuando ``titlebar_style="custom"``."""
+        env_val = os.environ.get("HERCULES_TITLEBAR_COLOR")
+        if env_val:
+            return env_val.strip()
+        try:
+            return self._parser.get("UI", "titlebar_color").strip()
+        except (configparser.Error, ValueError):
+            return "#1e1e1e"
+
+    @property
+    def ui_titlebar_text_color(self) -> str:
+        """Color del texto de la barra de título cuando ``titlebar_style="custom"``."""
+        env_val = os.environ.get("HERCULES_TITLEBAR_TEXT_COLOR")
+        if env_val:
+            return env_val.strip()
+        try:
+            return self._parser.get("UI", "titlebar_text_color").strip()
+        except (configparser.Error, ValueError):
+            return "#e0e0e0"
+
+    @property
+    def ui_custom_titlebar(self) -> bool:
+        """
+        Si es ``True``, usa una barra de título personalizada (tkinter)
+        con ``overrideredirect(True)`` en lugar de la barra nativa.
+
+        La barra personalizada usa los colores definidos en
+        ``ui_titlebar_color`` y ``ui_titlebar_text_color``, e incluye
+        botones minimizar, maximizar y cerrar con efecto hover.
+        """
+        env_val = os.environ.get("HERCULES_CUSTOM_TITLEBAR")
+        if env_val is not None:
+            return env_val.strip().lower() in ("1", "true", "yes", "on")
+        try:
+            return self._parser.getboolean("UI", "custom_titlebar")
+        except (configparser.Error, ValueError):
+            return True
+
+    @property
+    def ui_custom_titlebar_height(self) -> int:
+        """Altura en píxeles de la barra de título personalizada."""
+        env_val = os.environ.get("HERCULES_CUSTOM_TITLEBAR_HEIGHT")
+        if env_val is not None:
+            try:
+                return max(20, min(60, int(env_val)))
+            except ValueError:
+                pass
+        try:
+            return max(20, min(60, self._parser.getint("UI", "custom_titlebar_height")))
+        except (ValueError, configparser.Error):
+            return 32
+
+    @property
+    def ui_button_hover_bg(self) -> str:
+        return self._parser.get("UI", "button_hover_bg")
+
+    @property
+    def ui_button_pressed_bg(self) -> str:
+        return self._parser.get("UI", "button_pressed_bg")
+
+    @property
+    def ui_button_accent_bg(self) -> str:
+        return self._parser.get("UI", "button_accent_bg")
+
+    @property
+    def ui_button_accent_fg(self) -> str:
+        return self._parser.get("UI", "button_accent_fg")
+
+    @property
+    def ui_button_accent_hover_bg(self) -> str:
+        return self._parser.get("UI", "button_accent_hover_bg")
+
+    @property
+    def ui_button_accent_pressed_bg(self) -> str:
+        return self._parser.get("UI", "button_accent_pressed_bg")
+
+    @property
+    def ui_button_danger_bg(self) -> str:
+        return self._parser.get("UI", "button_danger_bg")
+
+    @property
+    def ui_button_danger_fg(self) -> str:
+        return self._parser.get("UI", "button_danger_fg")
+
+    @property
+    def ui_button_danger_hover_bg(self) -> str:
+        return self._parser.get("UI", "button_danger_hover_bg")
+
+    @property
+    def ui_button_danger_pressed_bg(self) -> str:
+        return self._parser.get("UI", "button_danger_pressed_bg")
+
+    @property
+    def ui_card_border_color(self) -> str:
+        return self._parser.get("UI", "card_border_color")
+
+    @property
+    def ui_card_border_width(self) -> int:
+        try:
+            return max(0, self._parser.getint("UI", "card_border_width"))
+        except (ValueError, configparser.Error):
+            return 1
+
+    @property
+    def ui_card_shadow_color(self) -> str:
+        return self._parser.get("UI", "card_shadow_color")
+
+    @property
+    def ui_accent_color(self) -> str:
+        return self._parser.get("UI", "accent_color")
+
+    @property
+    def ui_gradient_enabled(self) -> bool:
+        try:
+            return self._parser.getboolean("UI", "gradient_enabled")
+        except (ValueError, configparser.Error):
+            return True
+
+    @property
+    def ui_hover_animation_ms(self) -> int:
+        try:
+            return max(0, self._parser.getint("UI", "hover_animation_ms"))
+        except (ValueError, configparser.Error):
+            return 80
 
 
 # Instancia global de configuración.
@@ -1749,7 +2007,7 @@ def tool_search_files(args: Dict[str, Any]) -> str:
 
 
 def tool_get_current_time(_args: Dict[str, Any]) -> str:
-    return datetime.utcnow().isoformat(timespec="seconds")
+    return datetime.now(UTC).replace(tzinfo=None).isoformat(timespec="seconds")
 
 
 def tool_write_file(args: Dict[str, Any]) -> str:
@@ -1761,21 +2019,6 @@ def tool_write_file(args: Dict[str, Any]) -> str:
     except Exception as e:  # noqa: BLE001
         return f"ERROR al escribir {path}: {e}"
     return f"OK: escrito {len(content)} caracteres en {path}"
-
-def _tokenize_command(command: str) -> List[str]:
-    """
-    Divide un comando en segmentos independientes respetando chaining
-    operators (;, &&, ||, |) y subshells ($(...), `...`).
-    Cada segmento se analiza por separado.
-    """
-    # Primero extraer subshells para analizarlos recursivamente
-    subshells = re.findall(r'\$\(([^)]*)\)', command)
-    backticks = re.findall(r'`([^`]*)`', command)
-    
-    # Dividir por chaining operators (respetando comillas es complejo,
-    # pero para detección de patrones es suficiente)
-    segments = re.split(r'[;&|]+', command)
-    return [s.strip() for s in segments if s.strip()]
 
 def _is_command_safe(command: str) -> Tuple[bool, str]:
     """
@@ -2147,7 +2390,7 @@ class PermissionManager:
 
 class LoopDetector:
     """
-    Detecta cuando el modelo estÃ¡ repitiendo la misma respuesta.
+    Detecta cuando el modelo está repitiendo la misma respuesta.
 
     Genera una huella estable (fingerprint) de cada mensaje del asistente
     combinando el contenido textual normalizado y la firma de las
@@ -2194,16 +2437,8 @@ class LoopDetector:
         self._counts[fp] = self._counts.get(fp, 0) + 1
         return self._counts[fp]
 
-    def is_looping(self, content: str, tool_calls: List[ToolCall]) -> bool:
-        """
-        Devuelve True si la respuesta actual forma parte de un bucle
-        (contador >= umbral) sin incrementarlo.
-        """
-        fp = self.fingerprint(content, tool_calls)
-        return self._counts.get(fp, 0) >= self.threshold
-
     def reset(self) -> None:
-        """Reinicia el detector (p.ej. tras una compactaciÃ³n de contexto)."""
+        """Reinicia el detector (p.ej. tras una compactación de contexto)."""
         self._counts.clear()
 
 
@@ -3241,6 +3476,1326 @@ class TaskOrchestrator:
 
 
 # ============================================================================
+# WIDGETS PERSONALIZADOS (interfaz moderna)
+# ============================================================================
+# Estos widgets se construyen sobre Canvas para conseguir efectos que
+# tkinter/ttk no soporta de forma nativa:
+#   - Esquinas redondeadas en frames y botones.
+#   - Efectos hover/pressed con animación suave de color.
+#   - Fondos con degradado (gradiente vertical).
+#   - Bordes y sombras simuladas.
+#
+# Se mantiene la filosofía del proyecto: cero dependencias externas,
+# solo biblioteca estándar de Python (tkinter).
+# ============================================================================
+
+
+def _apply_modern_titlebar(window: Any) -> None:
+    """
+    Aplica un estilo moderno a la barra de título nativa de Windows.
+
+    Usa la API DWM (Desktop Window Manager) vía ``ctypes`` para
+    personalizar la barra de título sin necesidad de dependencias
+    externas. Soporta cuatro estilos configurables desde
+    ``CONFIG.ui_titlebar_style``:
+
+      - ``"system"``: no hace nada (aspecto clásico de Windows).
+      - ``"dark"``: activa el modo oscuro nativo (texto/iconos blancos
+        sobre fondo oscuro del sistema). Funciona en Windows 10 1903+
+        y Windows 11.
+      - ``"accent"``: usa el color de acento del sistema como fondo de
+        la barra de título (Windows 11 22H2+).
+      - ``"custom"``: usa los colores definidos en
+        ``CONFIG.ui_titlebar_color`` y ``CONFIG.ui_titlebar_text_color``
+        (Windows 11 22H2+).
+
+    En plataformas distintas de Windows, o si la API DWM no está
+    disponible, la función no hace nada (no rompe la aplicación).
+
+    Atributos DWM utilizados:
+      - ``DWMWA_USE_IMMERSIVE_DARK_MODE`` (20): modo oscuro.
+      - ``DWMWA_CAPTION_COLOR`` (35): color de fondo (Win 11 22H2+).
+      - ``DWMWA_TEXT_COLOR`` (36): color del texto (Win 11 22H2+).
+    """
+    # Solo Windows soporta personalización de la barra de título vía DWM.
+    if sys.platform != "win32":
+        return
+
+    style = (CONFIG.ui_titlebar_style or "system").strip().lower()
+    if style == "system":
+        return
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        # Resolver el HWND de la ventana tkinter.
+        try:
+            hwnd = int(window.frame(), 16)
+        except Exception:
+            try:
+                hwnd = window.winfo_id()
+            except Exception:
+                return
+
+        # Cargar dwmapi.dll y la función DwmSetWindowAttribute.
+        try:
+            dwmapi = ctypes.WinDLL("dwmapi")
+        except Exception:
+            return
+
+        DwmSetWindowAttribute = dwmapi.DwmSetWindowAttribute
+        DwmSetWindowAttribute.restype = ctypes.HRESULT
+        DwmSetWindowAttribute.argtypes = [
+            wintypes.HWND,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+        ]
+
+        def _set_attr(attr_id: int, value: int) -> bool:
+            """Llama a DwmSetWindowAttribute con un valor entero (BOOL/COLORREF)."""
+            try:
+                value_c = ctypes.c_int(value)
+                hr = DwmSetWindowAttribute(
+                    hwnd,
+                    attr_id,
+                    ctypes.byref(value_c),
+                    ctypes.sizeof(value_c),
+                )
+                return hr == 0  # S_OK
+            except Exception:
+                return False
+
+        # --- Modo oscuro (DWMWA_USE_IMMERSIVE_DARK_MODE = 20) ---
+        if style == "dark":
+            # True = 1, False = 0. Probamos también con el atributo 19
+            # (DWMWA_USE_IMMERSIVE_DARK_MODE antes de 20H1) por
+            # compatibilidad con versiones antiguas de Windows 10.
+            _set_attr(20, 1) or _set_attr(19, 1)
+            return
+
+        # --- Color personalizado / acento (Win 11 22H2+) ---
+        # DWMWA_CAPTION_COLOR = 35, DWMWA_TEXT_COLOR = 36.
+        # El valor es un COLORREF: 0x00BBGGRR (formato little-endian BGR).
+        def _hex_to_colorref(hex_color: str) -> int:
+            """Convierte '#rrggbb' a COLORREF (0x00BBGGRR)."""
+            c = hex_color.strip().lstrip("#")
+            if len(c) != 6:
+                return 0
+            try:
+                r = int(c[0:2], 16)
+                g = int(c[2:4], 16)
+                b = int(c[4:6], 16)
+            except ValueError:
+                return 0
+            return (b << 16) | (g << 8) | r
+
+        if style == "custom":
+            bg = _hex_to_colorref(CONFIG.ui_titlebar_color)
+            fg = _hex_to_colorref(CONFIG.ui_titlebar_text_color)
+            if bg:
+                _set_attr(35, bg)
+            if fg:
+                _set_attr(36, fg)
+            # Activar también el modo oscuro para que el texto se vea
+            # bien sobre el fondo oscuro personalizado.
+            _set_attr(20, 1) or _set_attr(19, 1)
+            return
+
+        if style == "accent":
+            # DWORD = 0xFFFFFFFF significa "usar color de acento del sistema".
+            _set_attr(35, 0xFFFFFFFF)
+            _set_attr(20, 1) or _set_attr(19, 1)
+            return
+
+    except Exception:
+        # Cualquier error se ignora silenciosamente: la barra de título
+        # simplemente quedará con el aspecto por defecto de Windows.
+        pass
+
+
+def _hex_to_rgb(color: str) -> Tuple[int, int, int]:
+    """Convierte un color hexadecimal (#rrggbb) a una tupla (r, g, b)."""
+    c = color.strip().lstrip("#")
+    if len(c) == 3:
+        c = "".join(ch * 2 for ch in c)
+    if len(c) != 6:
+        return (0, 0, 0)
+    try:
+        return (int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16))
+    except ValueError:
+        return (0, 0, 0)
+
+
+def _rgb_to_hex(rgb: Tuple[int, int, int]) -> str:
+    """Convierte una tupla (r, g, b) a color hexadecimal (#rrggbb)."""
+    r, g, b = (max(0, min(255, int(v))) for v in rgb)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _blend_colors(color_a: str, color_b: str, t: float) -> str:
+    """
+    Interpola linealmente entre dos colores hexadecimales.
+
+    ``t`` en [0.0, 1.0]: 0.0 devuelve ``color_a``, 1.0 devuelve ``color_b``.
+    """
+    t = max(0.0, min(1.0, float(t)))
+    ra, ga, ba = _hex_to_rgb(color_a)
+    rb, gb, bb = _hex_to_rgb(color_b)
+    return _rgb_to_hex(
+        (
+            ra + (rb - ra) * t,
+            ga + (gb - ga) * t,
+            ba + (bb - ba) * t,
+        )
+    )
+
+
+def _use_ttk_scrollbar(widget: ScrolledText) -> None:
+    """Sustituye la barra clásica de un ScrolledText por una ttk con tema."""
+    old = widget.vbar
+    new = ttk.Scrollbar(widget.frame, orient="vertical", command=widget.yview)
+    widget.configure(yscrollcommand=new.set)
+    old.destroy()
+    # El Text queda empaquetado en el frame; se reordena para que la barra se reserve primero.
+    widget.tk.call("pack", "forget", widget._w)
+    new.pack(side="right", fill="y")
+    widget.tk.call("pack", widget._w, "-side", "left", "-fill", "both", "-expand", "1")
+    widget.vbar = new
+    widget.frame.configure(background=widget.cget("background"))
+
+
+def _draw_rounded_rect(
+    canvas: Canvas,
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    radius: float,
+    **kwargs: Any,
+) -> int:
+    """
+    Dibuja un rectángulo con esquinas redondeadas en un Canvas.
+
+    Usa ``create_polygon`` con una secuencia de puntos que aproxima las
+    cuatro esquinas con arcos. Es la técnica estándar para esquinas
+    redondeadas en tkinter puro (sin dependencias externas).
+
+    Devuelve el id del objeto creado.
+    """
+    r = max(0.0, float(radius))
+    # Si el radio es 0 o el rectángulo es demasiado pequeño, dibuja un
+    # rectángulo normal (más rápido y visualmente idéntico).
+    if r <= 0 or (x2 - x1) < 2 * r or (y2 - y1) < 2 * r:
+        return canvas.create_rectangle(x1, y1, x2, y2, **kwargs)
+
+    # 12 puntos por esquina (cada 30°) → 48 puntos en total.
+    # Suficiente para que la curva se vea suave a simple vista.
+    steps_per_corner = 12
+    points: List[float] = []
+
+    # Esquina superior izquierda: centro (x1+r, y1+r), de 180° a 270°.
+    cx, cy = x1 + r, y1 + r
+    for i in range(steps_per_corner + 1):
+        angle = 180 + (90 * i / steps_per_corner)
+        import math
+        rad = math.radians(angle)
+        points.extend([cx + r * math.cos(rad), cy + r * math.sin(rad)])
+
+    # Esquina superior derecha: centro (x2-r, y1+r), de 270° a 360°.
+    cx, cy = x2 - r, y1 + r
+    for i in range(steps_per_corner + 1):
+        angle = 270 + (90 * i / steps_per_corner)
+        rad = math.radians(angle)
+        points.extend([cx + r * math.cos(rad), cy + r * math.sin(rad)])
+
+    # Esquina inferior derecha: centro (x2-r, y2-r), de 0° a 90°.
+    cx, cy = x2 - r, y2 - r
+    for i in range(steps_per_corner + 1):
+        angle = 0 + (90 * i / steps_per_corner)
+        rad = math.radians(angle)
+        points.extend([cx + r * math.cos(rad), cy + r * math.sin(rad)])
+
+    # Esquina inferior izquierda: centro (x1+r, y2-r), de 90° a 180°.
+    cx, cy = x1 + r, y2 - r
+    for i in range(steps_per_corner + 1):
+        angle = 90 + (90 * i / steps_per_corner)
+        rad = math.radians(angle)
+        points.extend([cx + r * math.cos(rad), cy + r * math.sin(rad)])
+
+    return canvas.create_polygon(points, smooth=True, **kwargs)
+
+
+class RoundedFrame:
+    """
+    Frame con esquinas redondeadas, borde opcional y sombra simulada.
+
+    Internamente es un ``Canvas`` que ocupa todo el espacio del contenedor
+    padre. Los widgets hijos se empaquetan en un ``Frame`` interno
+    (``self.inner``) que se redimensiona junto con el Canvas.
+
+    El Canvas ajusta su tamaño automáticamente al contenido del Frame
+    interno (más el padding), de modo que ``pack``/``grid`` propagan el
+    tamaño correcto hacia el contenedor padre.
+
+    Uso típico (sustituye a ``ttk.Frame`` con ``style="Card.TFrame"``)::
+
+        card = RoundedFrame(parent, bg=CONFIG.ui_card_bg,
+                            border_color=CONFIG.ui_card_border_color,
+                            border_width=CONFIG.ui_card_border_width,
+                            radius=CONFIG.ui_corner_radius)
+        card.pack(fill="both", expand=True, padx=4, pady=4)
+        ttk.Label(card.inner, text="Hola", style="Card.TLabel").pack()
+
+    Atributos públicos:
+        inner: Frame donde deben añadirse los widgets hijos.
+    """
+
+    def __init__(
+        self,
+        parent: Any,
+        bg: Optional[str] = None,
+        border_color: Optional[str] = None,
+        border_width: int = 0,
+        radius: int = 10,
+        shadow: bool = False,
+        shadow_color: Optional[str] = None,
+        padding: int = 0,
+        **kwargs: Any,
+    ) -> None:
+        self._bg = bg or CONFIG.ui_card_bg
+        self._border_color = border_color or CONFIG.ui_card_border_color
+        self._border_width = max(0, int(border_width))
+        self._radius = max(0, int(radius))
+        self._shadow = bool(shadow)
+        self._shadow_color = shadow_color or CONFIG.ui_card_shadow_color
+        self._padding = max(0, int(padding))
+
+        # Canvas exterior: aquí se dibujan el fondo redondeado, el borde
+        # y (opcionalmente) la sombra. Se inicializa con un tamaño mínimo
+        # de 1x1 para que ``winfo_reqwidth``/``winfo_reqheight`` devuelvan
+        # un valor válido desde el primer momento.
+        self.canvas = Canvas(
+            parent,
+            bg=CONFIG.ui_bg_color,  # mismo color que el fondo del dashboard
+            highlightthickness=0,
+            borderwidth=0,
+            width=1,
+            height=1,
+        )
+        # Frame interior: aquí se empaquetan los widgets hijos.
+        # Su fondo coincide con el del Canvas para que no se vea "hueco"
+        # en las esquinas redondeadas.
+        self.inner = Frame(
+            self.canvas,
+            bg=self._bg,
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        self._inner_window = self.canvas.create_window(
+            self._padding, self._padding,
+            window=self.inner,
+            anchor="nw",
+        )
+
+        # Eventos de redimensionamiento.
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+        # Cuando el Frame interno cambia su tamaño solicitado, ajustamos
+        # el Canvas para que ``pack``/``grid`` propaguen el tamaño correcto.
+        self.inner.bind("<Configure>", self._on_inner_configure)
+        # Cuando el Canvas se mapea por primera vez, forzamos el recálculo
+        # del tamaño basándonos en el contenido del Frame interno.
+        self.canvas.bind("<Map>", self._on_map)
+
+    # --- API compatible con widgets tkinter ---
+
+    def pack(self, **kwargs: Any) -> None:
+        self.canvas.pack(**kwargs)
+
+    def grid(self, **kwargs: Any) -> None:
+        self.canvas.grid(**kwargs)
+
+    def place(self, **kwargs: Any) -> None:
+        self.canvas.place(**kwargs)
+
+    def pack_propagate(self, flag: bool) -> None:
+        # No-op: el Canvas no propaga tamaño a los hijos de la misma
+        # manera que un Frame. Se mantiene por compatibilidad.
+        pass
+
+    def winfo_children(self) -> List[Any]:
+        return list(self.inner.winfo_children())
+
+    def configure(self, **kwargs: Any) -> None:
+        if "bg" in kwargs:
+            self._bg = kwargs["bg"]
+            self.inner.configure(bg=self._bg)
+            self._redraw()
+        if "border_color" in kwargs:
+            self._border_color = kwargs["border_color"]
+            self._redraw()
+        if "border_width" in kwargs:
+            self._border_width = max(0, int(kwargs["border_width"]))
+            self._redraw()
+        if "radius" in kwargs:
+            self._radius = max(0, int(kwargs["radius"]))
+            self._redraw()
+
+    # --- Redibujado ---
+
+    def _on_canvas_configure(self, _event: Any) -> None:
+        """Se ejecuta cuando el Canvas cambia de tamaño (por pack/grid)."""
+        self._redraw()
+
+    def _on_map(self, _event: Any) -> None:
+        """Se ejecuta cuando el Canvas se mapea por primera vez.
+
+        Fuerza el recálculo del tamaño basándose en el contenido del
+        Frame interno. Esto es necesario porque antes del mapeo,
+        ``winfo_reqwidth``/``winfo_reqheight`` pueden devolver valores
+        incorrectos.
+        """
+        # Forzar el recálculo del layout.
+        try:
+            self.inner.update_idletasks()
+            self.canvas.update_idletasks()
+        except Exception:  # noqa: BLE001
+            pass
+        # Llamar a _on_inner_configure manualmente.
+        self._on_inner_configure(None)
+
+    def _on_inner_configure(self, _event: Any) -> None:
+        """Se ejecuta cuando el Frame interno cambia su tamaño solicitado.
+
+        Ajusta el tamaño del Canvas para que coincida con el contenido
+        del Frame interno más el padding. Esto permite que ``pack``/``grid``
+        propaguen el tamaño correcto hacia el contenedor padre.
+
+        Solo se aplica cuando el Canvas ya está mapeado (visible en
+        pantalla); antes de eso, ``winfo_reqwidth``/``winfo_reqheight``
+        pueden devolver valores incorrectos (típicamente 1).
+        """
+        # Si el Canvas aún no está mapeado, no hacemos nada: el tamaño
+        # se ajustará cuando se mapee (vía ``<Map>``).
+        try:
+            if not self.canvas.winfo_ismapped():
+                return
+        except Exception:  # noqa: BLE001
+            return
+        try:
+            self.inner.update_idletasks()
+            req_w = self.inner.winfo_reqwidth()
+            req_h = self.inner.winfo_reqheight()
+        except Exception:  # noqa: BLE001
+            return
+        # Si los valores solicitados son demasiado pequeños (típico antes
+        # de que los hijos calculen su tamaño), no actualizamos.
+        if req_w < 2 or req_h < 2:
+            return
+        # Tamaño total del Canvas = contenido + padding a ambos lados.
+        canvas_w = req_w + 2 * self._padding
+        canvas_h = req_h + 2 * self._padding
+        # Solo actualizamos si el tamaño realmente cambió (evita bucles).
+        try:
+            cur_w = int(self.canvas.cget("width"))
+            cur_h = int(self.canvas.cget("height"))
+        except Exception:  # noqa: BLE001
+            cur_w, cur_h = 0, 0
+        if cur_w != canvas_w or cur_h != canvas_h:
+            self.canvas.configure(width=canvas_w, height=canvas_h)
+
+    def _redraw(self) -> None:
+        self.canvas.delete("card")
+        w = self.canvas.winfo_width()
+        h = self.canvas.winfo_height()
+        if w <= 1 or h <= 1:
+            return
+
+        # Sombra simulada: un rectángulo redondeado desplazado hacia
+        # abajo-derecha, en color shadow_color, sin outline.
+        if self._shadow and w > 4 and h > 4:
+            _draw_rounded_rect(
+                self.canvas,
+                2, 2, w, h,
+                radius=self._radius,
+                fill=self._shadow_color,
+                outline="",
+                tags="card",
+            )
+
+        # Tarjeta principal.
+        _draw_rounded_rect(
+            self.canvas,
+            0, 0, w - 2 if self._shadow else w,
+            h - 2 if self._shadow else h,
+            radius=self._radius,
+            fill=self._bg,
+            outline=self._border_color if self._border_width > 0 else "",
+            width=self._border_width if self._border_width > 0 else 0,
+            tags="card",
+        )
+
+        # Ajustar el tamaño del frame interior al área útil
+        # (descontando padding y, si hay sombra, el desplazamiento).
+        inner_w = max(1, w - 2 * self._padding - (2 if self._shadow else 0))
+        inner_h = max(1, h - 2 * self._padding - (2 if self._shadow else 0))
+        self.canvas.coords(self._inner_window, self._padding, self._padding)
+        self.canvas.itemconfigure(
+            self._inner_window, width=inner_w, height=inner_h,
+        )
+
+
+class RoundedButton:
+    """
+    Botón con esquinas redondeadas, efecto hover y efecto pressed.
+
+    Sustituye a ``ttk.Button`` para conseguir un aspecto moderno. El
+    texto se centra sobre un Canvas con esquinas redondeadas; al pasar
+    el ratón por encima, el color de fondo se anima suavemente hacia
+    ``hover_bg``; al pulsarlo, hacia ``pressed_bg``.
+
+    Uso típico::
+
+        btn = RoundedButton(parent, text="▶ Ejecutar",
+                            command=self._on_execute,
+                            bg=CONFIG.ui_button_accent_bg,
+                            fg=CONFIG.ui_button_accent_fg,
+                            hover_bg=CONFIG.ui_button_accent_hover_bg,
+                            pressed_bg=CONFIG.ui_button_accent_pressed_bg,
+                            radius=CONFIG.ui_corner_radius)
+        btn.pack(side="left")
+
+    Atributos públicos:
+        canvas: Canvas subyacente (por si se necesita acceso directo).
+    """
+
+    def __init__(
+        self,
+        parent: Any,
+        text: str = "",
+        command: Optional[Callable[[], Any]] = None,
+        bg: Optional[str] = None,
+        fg: Optional[str] = None,
+        hover_bg: Optional[str] = None,
+        pressed_bg: Optional[str] = None,
+        radius: Optional[int] = None,
+        font: Optional[Tuple[str, int, str]] = None,
+        padding_x: int = 14,
+        padding_y: int = 6,
+        disabled: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        self._bg = bg or CONFIG.ui_button_bg
+        self._fg = fg or CONFIG.ui_button_fg
+        self._hover_bg = hover_bg or CONFIG.ui_button_hover_bg
+        self._pressed_bg = pressed_bg or CONFIG.ui_button_pressed_bg
+        self._radius = CONFIG.ui_corner_radius if radius is None else max(0, int(radius))
+        self._font = font or (CONFIG.ui_font_family, CONFIG.ui_font_size)
+        self._command = command
+        self._disabled = bool(disabled)
+        self._padding_x = max(0, int(padding_x))
+        self._padding_y = max(0, int(padding_y))
+        self._anim_ms = CONFIG.ui_hover_animation_ms
+        self._anim_after_id: Optional[str] = None
+        self._current_color = self._bg
+
+        self.canvas = Canvas(
+            parent,
+            bg=CONFIG.ui_bg_color,
+            highlightthickness=0,
+            borderwidth=0,
+            cursor="hand2" if not self._disabled else "arrow",
+        )
+        self._text_id = self.canvas.create_text(
+            0, 0,
+            text=text,
+            fill=self._fg,
+            font=self._font,
+            anchor="center",
+        )
+        self._rect_id: Optional[int] = None
+
+        # Calcular el tamaño inicial del Canvas basándose en el texto.
+        # Esto permite que ``pack``/``grid`` propaguen el tamaño correcto
+        # desde el primer momento, sin esperar al evento ``<Configure>``.
+        self._update_canvas_size()
+
+        # Eventos.
+        self.canvas.bind("<Configure>", self._on_configure)
+        if not self._disabled:
+            self.canvas.bind("<Enter>", self._on_enter)
+            self.canvas.bind("<Leave>", self._on_leave)
+            self.canvas.bind("<ButtonPress-1>", self._on_press)
+            self.canvas.bind("<ButtonRelease-1>", self._on_release)
+            # Atajo: Enter y Space disparan el comando cuando el botón
+            # tiene foco.
+            self.canvas.bind("<Return>", lambda _e: self._invoke())
+            self.canvas.bind("<space>", lambda _e: self._invoke())
+            # El Canvas puede recibir foco con Tab.
+            self.canvas.bind("<FocusIn>", self._on_focus_in)
+            self.canvas.bind("<FocusOut>", self._on_focus_out)
+
+    # --- API compatible con widgets tkinter ---
+
+    def pack(self, **kwargs: Any) -> None:
+        self.canvas.pack(**kwargs)
+
+    def grid(self, **kwargs: Any) -> None:
+        self.canvas.grid(**kwargs)
+
+    def place(self, **kwargs: Any) -> None:
+        self.canvas.place(**kwargs)
+
+    def focus_set(self) -> None:
+        self.canvas.focus_set()
+
+    def configure(self, **kwargs: Any) -> None:
+        if "text" in kwargs:
+            self.canvas.itemconfigure(self._text_id, text=kwargs["text"])
+            self._update_canvas_size()
+        if "state" in kwargs:
+            self._disabled = (str(kwargs["state"]) == "disabled")
+            if self._disabled:
+                self.canvas.unbind("<Enter>")
+                self.canvas.unbind("<Leave>")
+                self.canvas.unbind("<ButtonPress-1>")
+                self.canvas.unbind("<ButtonRelease-1>")
+                self.canvas.configure(cursor="arrow")
+                self._animate_to(self._bg)
+            else:
+                self.canvas.bind("<Enter>", self._on_enter)
+                self.canvas.bind("<Leave>", self._on_leave)
+                self.canvas.bind("<ButtonPress-1>", self._on_press)
+                self.canvas.bind("<ButtonRelease-1>", self._on_release)
+                self.canvas.configure(cursor="hand2")
+        if "bg" in kwargs:
+            self._bg = kwargs["bg"]
+            self._animate_to(self._bg)
+        if "fg" in kwargs:
+            self._fg = kwargs["fg"]
+            self.canvas.itemconfigure(self._text_id, fill=self._fg)
+
+    # --- Redibujado ---
+
+    def _on_configure(self, _event: Any) -> None:
+        self._redraw()
+
+    def _update_canvas_size(self) -> None:
+        """Ajusta el tamaño del Canvas al texto + padding.
+
+        Se llama al inicializar el botón y cada vez que cambia el texto,
+        para que ``pack``/``grid`` propaguen el tamaño correcto.
+        """
+        try:
+            self.canvas.update_idletasks()
+            bbox = self.canvas.bbox(self._text_id)
+        except Exception:  # noqa: BLE001
+            bbox = None
+        if bbox is None:
+            # Fallback: usar un tamaño mínimo razonable.
+            text_w, text_h = 60, 20
+        else:
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+        canvas_w = text_w + 2 * self._padding_x
+        canvas_h = text_h + 2 * self._padding_y
+        try:
+            self.canvas.configure(width=canvas_w, height=canvas_h)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _redraw(self) -> None:
+        w = self.canvas.winfo_width()
+        h = self.canvas.winfo_height()
+        if w <= 1 or h <= 1:
+            return
+        # Centrar el texto.
+        self.canvas.coords(self._text_id, w / 2, h / 2)
+        # Redibujar el rectángulo redondeado con el color actual.
+        if self._rect_id is not None:
+            self.canvas.delete(self._rect_id)
+        self._rect_id = _draw_rounded_rect(
+            self.canvas,
+            0, 0, w, h,
+            radius=self._radius,
+            fill=self._current_color,
+            outline="",
+        )
+        # Asegurar que el texto queda por encima del rectángulo.
+        self.canvas.tag_raise(self._text_id)
+
+    # --- Eventos ---
+
+    def _on_enter(self, _event: Any) -> None:
+        if self._disabled:
+            return
+        self._animate_to(self._hover_bg)
+
+    def _on_leave(self, _event: Any) -> None:
+        if self._disabled:
+            return
+        self._animate_to(self._bg)
+
+    def _on_press(self, _event: Any) -> None:
+        if self._disabled:
+            return
+        self._animate_to(self._pressed_bg)
+
+    def _on_release(self, event: Any) -> None:
+        if self._disabled:
+            return
+        # Si el ratón sigue dentro del botón al soltar, mantenemos el
+        # color hover; si no, volvemos al color base.
+        x = self.canvas.canvasx(event.x)
+        y = self.canvas.canvasy(event.y)
+        w = self.canvas.winfo_width()
+        h = self.canvas.winfo_height()
+        if 0 <= x <= w and 0 <= y <= h:
+            self._animate_to(self._hover_bg)
+            self._invoke()
+        else:
+            self._animate_to(self._bg)
+
+    def _on_focus_in(self, _event: Any) -> None:
+        if self._disabled:
+            return
+        # Resaltar el foco con un borde sutil.
+        self.canvas.itemconfigure(
+            self._text_id, fill=self._fg,
+        )
+
+    def _on_focus_out(self, _event: Any) -> None:
+        if self._disabled:
+            return
+        self.canvas.itemconfigure(self._text_id, fill=self._fg)
+
+    def _invoke(self) -> None:
+        if self._disabled or self._command is None:
+            return
+        try:
+            self._command()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[button] Error al ejecutar comando: {exc}")
+
+    # --- Animación de color ---
+
+    def _animate_to(self, target: str) -> None:
+        """
+        Anima el color de fondo desde ``self._current_color`` hasta
+        ``target`` en ``self._anim_ms`` milisegundos.
+
+        Si la animación está deshabilitada (``anim_ms == 0``) o el
+        color ya coincide, simplemente repinta.
+        """
+        if self._anim_after_id is not None:
+            try:
+                self.canvas.after_cancel(self._anim_after_id)
+            except Exception:  # noqa: BLE001
+                pass
+            self._anim_after_id = None
+
+        if self._anim_ms <= 0 or self._current_color == target:
+            self._current_color = target
+            self._redraw()
+            return
+
+        # Animación en 6 pasos (~80 ms total por defecto).
+        steps = 6
+        delay = max(1, self._anim_ms // steps)
+        start = self._current_color
+
+        def _step(i: int) -> None:
+            t = i / float(steps)
+            self._current_color = _blend_colors(start, target, t)
+            self._redraw()
+            if i < steps:
+                self._anim_after_id = self.canvas.after(delay, _step, i + 1)
+            else:
+                self._anim_after_id = None
+
+        _step(1)
+
+
+# ============================================================================
+# BARRA DE TÍTULO PERSONALIZADA (overrideredirect + estilo moderno)
+# ============================================================================
+
+def _force_taskbar_visibility(window: Any) -> None:
+    """
+    Fuerza la ventana a aparecer en la barra de tareas de Windows.
+
+    Las ventanas con ``overrideredirect(True)`` no aparecen en la
+    barra de tareas por defecto. Para que sigan apareciendo (y
+    puedan ser activadas con Alt+Tab), se añade el estilo extendido
+    ``WS_EX_APPWINDOW`` mediante la API de Win32.
+
+    En plataformas distintas de Windows, o si la API no está
+    disponible, la función no hace nada.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        try:
+            hwnd = int(window.frame(), 16)
+        except Exception:
+            try:
+                hwnd = window.winfo_id()
+            except Exception:
+                return
+
+        GWL_EXSTYLE = -20
+        WS_EX_APPWINDOW = 0x00040000
+        WS_EX_TOOLWINDOW = 0x00000080
+        try:
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            GetWindowLongW = user32.GetWindowLongW
+            GetWindowLongW.restype = wintypes.LONG
+            GetWindowLongW.argtypes = [wintypes.HWND, wintypes.INT]
+            SetWindowLongW = user32.SetWindowLongW
+            SetWindowLongW.restype = wintypes.LONG
+            SetWindowLongW.argtypes = [wintypes.HWND, wintypes.INT, wintypes.LONG]
+            style = GetWindowLongW(hwnd, GWL_EXSTYLE)
+            SetWindowLongW(
+                hwnd, GWL_EXSTYLE, (style | WS_EX_APPWINDOW) & ~WS_EX_TOOLWINDOW
+            )
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _win32_minimize(window: Any) -> bool:
+    """Minimiza una ventana overrideredirect conservando su icono en la barra de tareas."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+
+        window.update_idletasks()
+        try:
+            hwnd = int(window.frame(), 16)
+        except Exception:
+            hwnd = window.winfo_id()
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        SW_HIDE, SW_SHOWMINNOACTIVE = 0, 7
+        # Ocultar antes de cambiar estilos para que el shell refresque la barra de tareas.
+        user32.ShowWindow(hwnd, SW_HIDE)
+        _force_taskbar_visibility(window)
+        user32.ShowWindow(hwnd, SW_SHOWMINNOACTIVE)
+        return True
+    except Exception:
+        return False
+
+
+def _bring_to_front(window: Any) -> None:
+    """Sube una ventana (incluida overrideredirect) al frente y le da foco."""
+    try:
+        window.update_idletasks()
+        window.lift()
+        window.attributes("-topmost", True)
+        window.focus_force()
+        # Se quita topmost tras mostrarse para no quedar sobre otras apps.
+        window.after(300, lambda: window.winfo_exists() and window.attributes("-topmost", False))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _is_minimized(window: Any) -> bool:
+    """Indica si la ventana está minimizada (incluye ventanas overrideredirect)."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            try:
+                hwnd = int(window.frame(), 16)
+            except Exception:  # noqa: BLE001
+                hwnd = window.winfo_id()
+            return bool(ctypes.WinDLL("user32").IsIconic(hwnd))
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        return window.state() == "iconic"
+    except Exception:  # noqa: BLE001
+        return False
+
+
+class _TrayNotifier:
+    """Icono temporal en la bandeja del sistema (Windows) con globo de aviso."""
+
+    _UID = 0x4852
+    _active_hwnd: Optional[int] = None
+
+    @classmethod
+    def _data(cls, hwnd: int, title: str = "", message: str = "") -> Any:
+        import ctypes
+        from ctypes import wintypes
+
+        class NOTIFYICONDATAW(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD),
+                ("hWnd", wintypes.HWND),
+                ("uID", wintypes.UINT),
+                ("uFlags", wintypes.UINT),
+                ("uCallbackMessage", wintypes.UINT),
+                ("hIcon", wintypes.HICON),
+                ("szTip", wintypes.WCHAR * 128),
+                ("dwState", wintypes.DWORD),
+                ("dwStateMask", wintypes.DWORD),
+                ("szInfo", wintypes.WCHAR * 256),
+                ("uVersion", wintypes.UINT),
+                ("szInfoTitle", wintypes.WCHAR * 64),
+                ("dwInfoFlags", wintypes.DWORD),
+                ("guidItem", ctypes.c_byte * 16),
+                ("hBalloonIcon", wintypes.HICON),
+            ]
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.LoadIconW.restype = wintypes.HICON
+        user32.LoadIconW.argtypes = [wintypes.HINSTANCE, ctypes.c_void_p]
+        data = NOTIFYICONDATAW()
+        data.cbSize = ctypes.sizeof(NOTIFYICONDATAW)
+        data.hWnd = hwnd
+        data.uID = cls._UID
+        data.uFlags = 0x2 | 0x4 | 0x10  # NIF_ICON | NIF_TIP | NIF_INFO
+        data.hIcon = user32.LoadIconW(None, 32515)  # IDI_WARNING
+        data.szTip = "Hercules: autorización pendiente"
+        data.szInfoTitle = title[:63]
+        data.szInfo = message[:255]
+        data.dwInfoFlags = 0x2  # NIIF_WARNING
+        return data
+
+    @classmethod
+    def show(cls, window: Any, title: str, message: str) -> None:
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+
+            window.update_idletasks()
+            try:
+                hwnd = int(window.frame(), 16)
+            except Exception:  # noqa: BLE001
+                hwnd = window.winfo_id()
+            shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+            data = cls._data(hwnd, title, message)
+            if cls._active_hwnd is None:
+                shell32.Shell_NotifyIconW(0, ctypes.byref(data))  # NIM_ADD
+                cls._active_hwnd = hwnd
+            else:
+                shell32.Shell_NotifyIconW(1, ctypes.byref(data))  # NIM_MODIFY
+        except Exception:  # noqa: BLE001
+            pass
+
+    @classmethod
+    def remove(cls) -> None:
+        if sys.platform != "win32" or cls._active_hwnd is None:
+            return
+        try:
+            import ctypes
+
+            shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+            data = cls._data(cls._active_hwnd)
+            shell32.Shell_NotifyIconW(2, ctypes.byref(data))  # NIM_DELETE
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            cls._active_hwnd = None
+
+
+class CustomTitleBar:
+    """
+    Barra de título personalizada con estilo moderno y minimalista.
+
+
+    Reemplaza la barra de título nativa de Windows cuando la ventana
+    usa ``overrideredirect(True)``. Incluye:
+
+      - Icono y título de la aplicación a la izquierda.
+      - Botones minimizar, maximizar/restaurar y cerrar a la derecha.
+      - Arrastrar para mover la ventana.
+      - Doble clic sobre el área de título para maximizar/restaurar.
+      - Colores configurables desde ``config.ini``.
+      - Efectos hover en los botones.
+
+    Atributos:
+        frame: Frame de tkinter que contiene la barra. Se debe
+            empaquetar/gridar en la ventana padre.
+    """
+
+    DEFAULT_HEIGHT = 32
+
+    def __init__(
+        self,
+        parent: Any,
+        title: str = "",
+        icon: str = "",
+        bg: Optional[str] = None,
+        fg: Optional[str] = None,
+        hover_bg: Optional[str] = None,
+        close_hover_bg: Optional[str] = None,
+        height: Optional[int] = None,
+        show_minimize: bool = True,
+        show_maximize: bool = True,
+        close_callback: Optional[Callable[[], None]] = None,
+        settings_callback: Optional[Callable[[], None]] = None,
+    ) -> None:
+        self.parent = parent
+        self._settings_callback = settings_callback
+        self._title_text = title
+        self._icon_text = icon
+        self._bg = bg or CONFIG.ui_titlebar_color
+        self._fg = fg or CONFIG.ui_titlebar_text_color
+        self._hover_bg = hover_bg or CONFIG.ui_button_hover_bg
+        self._close_hover_bg = close_hover_bg or CONFIG.ui_button_danger_bg
+        self._height = height if height is not None else self.DEFAULT_HEIGHT
+        self._close_callback = close_callback
+        self._show_minimize = show_minimize
+        self._show_maximize = show_maximize
+        self._drag_data: Dict[str, int] = {"x": 0, "y": 0}
+        self._is_maximized = False
+        self._pre_maximize_geometry: Optional[str] = None
+
+        # Frame principal de la barra de título.
+        self.frame = Frame(
+            parent,
+            bg=self._bg,
+            height=self._height,
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        # Evitar que el frame se encoja al empaquetar contenido.
+        self.frame.pack_propagate(False)
+
+        # --- Lado izquierdo: icono + título ---
+        left = Frame(
+            self.frame,
+            bg=self._bg,
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        left.pack(side="left", fill="both", expand=True)
+
+        title_display = (
+            f"{self._icon_text}  {self._title_text}"
+            if self._icon_text
+            else self._title_text
+        )
+        self._title_label = TkLabel(
+            left,
+            text=title_display,
+            bg=self._bg,
+            fg=self._fg,
+            font=(CONFIG.ui_font_family, CONFIG.ui_font_size, "bold"),
+            padx=12,
+            pady=0,
+            anchor="w",
+        )
+        self._title_label.pack(side="left", fill="y")
+
+        # --- Lado derecho: botones de ventana ---
+        right = Frame(
+            self.frame,
+            bg=self._bg,
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        right.pack(side="right", fill="y")
+
+        if self._settings_callback is not None:
+            self._settings_btn = self._create_title_button(
+                right, "\u2699", self._settings_callback, is_close=False
+            )
+            self._settings_btn.pack(side="left", fill="y")
+
+        if self._show_minimize:
+            self._min_btn = self._create_title_button(
+                right, "\u2014", self._on_minimize, is_close=False
+            )
+            self._min_btn.pack(side="left", fill="y")
+
+        if self._show_maximize:
+            self._max_btn = self._create_title_button(
+                right, "\u25a1", self._on_toggle_maximize, is_close=False
+            )
+            self._max_btn.pack(side="left", fill="y")
+
+        self._close_btn = self._create_title_button(
+            right, "\u2715", self._on_close, is_close=True
+        )
+        self._close_btn.pack(side="left", fill="y")
+
+        # --- Bindings de arrastre ---
+        # El arrastre funciona sobre el frame, el área izquierda y la
+        # etiqueta de título. Los botones tienen sus propios handlers
+        # y consumen el evento para que no se inicie el arrastre.
+        drag_widgets = [self.frame, left, self._title_label]
+        for w in drag_widgets:
+            w.bind("<Button-1>", self._on_drag_start)
+            w.bind("<B1-Motion>", self._on_drag_motion)
+            w.bind("<Double-Button-1>", self._on_double_click)
+
+    def _create_title_button(
+        self,
+        parent: Any,
+        text: str,
+        command: Callable[[], None],
+        is_close: bool = False,
+    ) -> TkLabel:
+        """Crea un botón de la barra de título con efecto hover."""
+        btn = TkLabel(
+            parent,
+            text=text,
+            bg=self._bg,
+            fg=self._fg,
+            font=(CONFIG.ui_font_family, 10),
+            width=4,
+            cursor="hand2",
+            padx=0,
+            pady=0,
+        )
+        btn._normal_bg = self._bg
+        btn._hover_bg = self._close_hover_bg if is_close else self._hover_bg
+        btn._command = command
+        btn.bind("<Enter>", lambda _e: btn.configure(bg=btn._hover_bg))
+        btn.bind("<Leave>", lambda _e: btn.configure(bg=btn._normal_bg))
+        # Usamos Button-1 con return "break" para que no se propague
+        # al frame y no inicie un arrastre.
+        btn.bind("<Button-1>", lambda _e: (command(), "break")[1])
+        return btn
+
+    # --- Handlers de botones ---
+
+    def _on_minimize(self) -> None:
+        """Minimiza la ventana a la barra de tareas."""
+        if _win32_minimize(self.parent):
+            return
+        # Fallback: desactivar overrideredirect temporalmente y restaurarlo en <Map>.
+        try:
+            self.parent.update_idletasks()
+            self.parent.overrideredirect(False)
+            self.parent.iconify()
+            self._restore_bind = self.parent.bind("<Map>", self._on_restore_from_minimize, add="+")
+        except Exception:
+            pass
+
+    def _on_restore_from_minimize(self, event: Any) -> None:
+        """Reaplica el modo sin bordes al restaurar la ventana minimizada."""
+        if event.widget is not self.parent:
+            return
+        try:
+            self.parent.unbind("<Map>")
+            self.parent.overrideredirect(True)
+            _force_taskbar_visibility(self.parent)
+            _bring_to_front(self.parent)
+        except Exception:
+            pass
+
+    def _on_toggle_maximize(self) -> None:
+        """Alterna entre maximizado y tamaño normal."""
+        try:
+            # La app puede arrancar ya maximizada, así que se consulta el estado real.
+            maximized = self._is_maximized or self.parent.state() == "zoomed"
+            if maximized:
+                self.parent.state("normal")
+                self.parent.update_idletasks()
+                sw = self.parent.winfo_screenwidth()
+                sh = self.parent.winfo_screenheight()
+                geo = self._pre_maximize_geometry
+                if not geo or geo.startswith(f"{sw}x{sh}"):
+                    w, h = int(sw * 0.7), int(sh * 0.7)
+                    geo = f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}"
+                self.parent.geometry(geo)
+                self._is_maximized = False
+            else:
+                self._pre_maximize_geometry = self.parent.geometry()
+                self.parent.state("zoomed")
+                self._is_maximized = True
+        except Exception:
+            pass
+
+    def _on_close(self) -> None:
+        """Cierra la ventana (o llama al callback personalizado)."""
+        if self._close_callback is not None:
+            try:
+                self._close_callback()
+            except Exception:
+                pass
+        else:
+            try:
+                self.parent.destroy()
+            except Exception:
+                pass
+
+    # --- Handlers de arrastre ---
+
+    def _on_drag_start(self, event: Any) -> None:
+        """Inicia el arrastre de la ventana."""
+        self._drag_data["x"] = event.x_root
+        self._drag_data["y"] = event.y_root
+
+    def _on_drag_motion(self, event: Any) -> None:
+        """Mueve la ventana siguiendo el cursor."""
+        # Si está maximizada, restaurar al tamaño previo antes de mover.
+        if self._is_maximized:
+            # Restaurar a un tamaño razonable proporcional a la posición.
+            try:
+                self.parent.state("normal")
+                self._is_maximized = False
+                # Reposicionar la ventana para que el cursor quede sobre
+                # la barra de título (estilo Windows 11).
+                sw = self.parent.winfo_screenwidth()
+                ratio = max(0.3, min(0.7, event.x_root / max(1, sw)))
+                new_w = max(800, int(sw * 0.7))
+                new_h = max(500, int(self.parent.winfo_screenheight() * 0.7))
+                x = max(0, event.x_root - int(new_w * ratio))
+                y = max(0, event.y_root - 16)
+                self.parent.geometry(f"{new_w}x{new_h}+{x}+{y}")
+                self._drag_data["x"] = event.x_root
+                self._drag_data["y"] = event.y_root
+                return
+            except Exception:
+                return
+
+        try:
+            x = self.parent.winfo_x() + (event.x_root - self._drag_data["x"])
+            y = self.parent.winfo_y() + (event.y_root - self._drag_data["y"])
+            self.parent.geometry(f"+{x}+{y}")
+            self._drag_data["x"] = event.x_root
+            self._drag_data["y"] = event.y_root
+        except Exception:
+            pass
+
+    def _on_double_click(self, _event: Any) -> None:
+        """Maximiza/restaurar al hacer doble clic sobre el título."""
+        if self._show_maximize:
+            self._on_toggle_maximize()
+
+    # --- Helpers de empaquetado ---
+
+    def pack(self, **kwargs: Any) -> None:
+        """Empaqueta el frame de la barra de título."""
+        self.frame.pack(**kwargs)
+
+    def grid(self, **kwargs: Any) -> None:
+        """Posiciona el frame de la barra de título con grid."""
+        self.frame.grid(**kwargs)
+
+    def set_title(self, title: str) -> None:
+        """Actualiza el texto del título."""
+        self._title_text = title
+        display = (
+            f"{self._icon_text}  {title}" if self._icon_text else title
+        )
+        try:
+            self._title_label.configure(text=display)
+        except Exception:
+            pass
+
+
+class GradientCanvas(Canvas):
+    """
+    Canvas con fondo en degradado vertical entre dos colores.
+
+    Se usa para barras de progreso, cabeceras y otros elementos que
+    quieran un aspecto más "moderno". El degradado se redibuja
+    automáticamente al cambiar el tamaño del widget.
+    """
+
+    def __init__(
+        self,
+        parent: Any,
+        color_top: str,
+        color_bottom: str,
+        radius: int = 0,
+        corner_bg: Optional[str] = None,
+        **kwargs: Any,
+    ) -> None:
+        # Quitar ``bg`` de kwargs si está presente para evitar conflicto.
+        kwargs.pop("bg", None)
+        kwargs.pop("highlightthickness", None)
+        super().__init__(
+            parent,
+            highlightthickness=0,
+            borderwidth=0,
+            bg=corner_bg or CONFIG.ui_bg_color,
+            **kwargs,
+        )
+        self._color_top = color_top
+        self._color_bottom = color_bottom
+        self._radius = max(0, int(radius))
+        self._corner_bg = corner_bg or CONFIG.ui_bg_color
+        self.bind("<Configure>", self._on_configure)
+
+    def _on_configure(self, _event: Any) -> None:
+        self._redraw()
+
+    def set_colors(self, color_top: str, color_bottom: str) -> None:
+        self._color_top = color_top
+        self._color_bottom = color_bottom
+        self._redraw()
+
+    def _redraw(self) -> None:
+        self.delete("gradient")
+        w = self.winfo_width()
+        h = self.winfo_height()
+        if w <= 1 or h <= 1:
+            return
+        # Degradado vertical: una banda por cada píxel de alto.
+        # Para widgets pequeños (<200 px) es perfectamente fluido.
+        if h <= 256:
+            for y in range(h):
+                t = y / max(1, h - 1)
+                color = _blend_colors(self._color_top, self._color_bottom, t)
+                self.create_line(
+                    0, y, w, y,
+                    fill=color, tags="gradient",
+                )
+        else:
+            # Para alturas grandes, usa bandas de 4 px (más eficiente).
+            band = 4
+            for y in range(0, h, band):
+                t = y / max(1, h - 1)
+                color = _blend_colors(self._color_top, self._color_bottom, t)
+                self.create_rectangle(
+                    0, y, w, min(y + band, h),
+                    fill=color, outline=color, tags="gradient",
+                )
+        # Si hay radio, recortar las esquinas redondeadas pintando
+        # el color de fondo del padre en las cuatro esquinas.
+        if self._radius > 0:
+            r = self._radius
+            bg = self._corner_bg
+            # Esquina superior izquierda.
+            self.create_arc(
+                0, 0, 2 * r, 2 * r,
+                start=90, extent=90, style="pieslice",
+                fill=bg, outline=bg, tags="gradient",
+            )
+            # Esquina superior derecha.
+            self.create_arc(
+                w - 2 * r, 0, w, 2 * r,
+                start=0, extent=90, style="pieslice",
+                fill=bg, outline=bg, tags="gradient",
+            )
+            # Esquina inferior izquierda.
+            self.create_arc(
+                0, h - 2 * r, 2 * r, h,
+                start=180, extent=90, style="pieslice",
+                fill=bg, outline=bg, tags="gradient",
+            )
+            # Esquina inferior derecha.
+            self.create_arc(
+                w - 2 * r, h - 2 * r, w, h,
+                start=270, extent=90, style="pieslice",
+                fill=bg, outline=bg, tags="gradient",
+            )
+
+
+# ============================================================================
 # INTERFAZ DE USUARIO (Dashboard tkinter)
 # ============================================================================
 
@@ -3302,7 +4857,7 @@ def _format_approval_args(tool_name: str, args: Dict[str, Any]) -> str:
         lines.append(preview)
     elif tool_name == "execute_command":
         cmd = args.get("command", "")
-        lines.append(f"💻 Comando a ejecutar:")
+        lines.append("💻 Comando a ejecutar:")
         lines.append(f"   {cmd}")
     elif tool_name == "delete_file":
         path = args.get("path", "")
@@ -3392,6 +4947,13 @@ class Dashboard:
         )
 
         self.selected_task_id: Optional[int] = None
+        # Mientras sea True, historial y barra siguen a la última tarea en
+        # progreso; pulsar "Ver" lo desactiva y crear una tarea lo reactiva.
+        self._follow_active_task = True
+        # Variable de la casilla "Preautorizar" de la barra superior.
+        # Se inicializa aquí (antes de _build_layout) porque el checkbox
+        # se construye dentro del layout y necesita esta variable.
+        self.preauth_var = BooleanVar(value=False)
         self._build_styles()
         self._build_layout()
         # --- Spinner animado para tareas IN_PROGRESS ---
@@ -3406,7 +4968,7 @@ class Dashboard:
         self._tick_spinner()
 
     def _apply_ui_config(self) -> None:
-        """Aplica colores, fuente y modo fullscreen desde la configuración."""
+        """Aplica colores, fuente, transparencia y modo fullscreen desde la configuración."""
         try:
             self.root.configure(bg=CONFIG.ui_bg_color)
         except Exception:  # noqa: BLE001
@@ -3417,12 +4979,44 @@ class Dashboard:
             self.root.option_add("*Font", default_font)
         except Exception:  # noqa: BLE001
             pass
+        # Barra de título personalizada (overrideredirect). Se aplica
+        # ANTES del fullscreen para que la ventana ya sea borderless
+        # cuando se maximiza. Solo si está habilitada en config.ini.
+        if CONFIG.ui_custom_titlebar:
+            try:
+                self.root.overrideredirect(True)
+            except Exception:  # noqa: BLE001
+                pass
+            # Forzar que la ventana aparezca en la barra de tareas de
+            # Windows (overrideredirect la oculta por defecto).
+            try:
+                _force_taskbar_visibility(self.root)
+            except Exception:  # noqa: BLE001
+                pass
         # Fullscreen si está habilitado en config.ini.
         if CONFIG.ui_fullscreen:
             try:
                 self.root.state("zoomed")
             except Exception:  # noqa: BLE001
                 self.root.attributes("-fullscreen", True)
+        # Transparencia de la ventana (0.5 - 1.0). Solo funciona en
+        # plataformas que soporten el atributo "-alpha" (Windows, macOS,
+        # algunos X11). Si falla, se ignora silenciosamente.
+        try:
+            alpha = float(CONFIG.ui_window_alpha)
+            if 0.5 <= alpha <= 1.0:
+                self.root.attributes("-alpha", alpha)
+        except Exception:  # noqa: BLE001
+            pass
+        # Barra de título moderna (modo oscuro / color personalizado).
+        # Solo funciona en Windows 10/11 vía DWM. En otras plataformas
+        # o si la API no está disponible, se ignora silenciosamente.
+        # Si se usa la barra personalizada (overrideredirect), esta
+        # llamada es un no-op porque no hay barra nativa.
+        try:
+            _apply_modern_titlebar(self.root)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _build_config_label_text(self) -> str:
         """Genera el texto de la barra de estado según el modo LLM."""
@@ -3453,6 +5047,9 @@ class Dashboard:
             background=CONFIG.ui_browser_bg,
             foreground=CONFIG.ui_browser_fg,
             fieldbackground=CONFIG.ui_browser_bg,
+            bordercolor=CONFIG.ui_browser_border,
+            lightcolor=CONFIG.ui_browser_border,
+            darkcolor=CONFIG.ui_browser_border,
             borderwidth=0,
             rowheight=22,
         )
@@ -3465,6 +5062,9 @@ class Dashboard:
             "Treeview.Heading",
             background=CONFIG.ui_browser_header_bg,
             foreground=CONFIG.ui_browser_fg,
+            bordercolor=CONFIG.ui_browser_border,
+            lightcolor=CONFIG.ui_browser_header_bg,
+            darkcolor=CONFIG.ui_browser_header_bg,
             relief="flat",
         )
         style.map(
@@ -3486,13 +5086,13 @@ class Dashboard:
         style.configure(
             "Title.TLabel",
             background=CONFIG.ui_frame_bg,
-            foreground=CONFIG.ui_fg_color,
+            foreground=CONFIG.ui_accent_color,
             font=(CONFIG.ui_font_family, CONFIG.ui_font_size + 2, "bold"),
         )
         style.configure(
             "Header.TLabel",
             background=CONFIG.ui_card_bg,
-            foreground=CONFIG.ui_fg_color,
+            foreground=CONFIG.ui_accent_color,
             font=(CONFIG.ui_font_family, CONFIG.ui_font_size + 1, "bold"),
         )
         style.configure("Status.PENDING.TLabel", foreground=EVENT_STATUS_COLORS[TaskStatus.PENDING.value])
@@ -3502,6 +5102,8 @@ class Dashboard:
         style.configure("Status.FAILED.TLabel", foreground=EVENT_STATUS_COLORS[TaskStatus.FAILED.value])
         style.configure("Status.CANCELLED.TLabel", foreground=EVENT_STATUS_COLORS[TaskStatus.CANCELLED.value])
         # Estilo base de todos los botones (los específicos heredan de aquí).
+        # Se mantienen los estilos ttk originales para compatibilidad con
+        # widgets que aún no se hayan migrado a RoundedButton.
         style.configure(
             "TButton",
             background=CONFIG.ui_button_bg,
@@ -3512,7 +5114,7 @@ class Dashboard:
         style.map(
             "TButton",
             background=[
-                ("active", CONFIG.ui_button_bg),
+                ("active", CONFIG.ui_button_hover_bg),
                 ("disabled", CONFIG.ui_card_bg),
             ],
             foreground=[
@@ -3521,24 +5123,45 @@ class Dashboard:
         )
         style.configure(
             "Execute.TButton",
-            background=CONFIG.ui_button_bg,
-            foreground=CONFIG.ui_button_fg,
+            background=CONFIG.ui_button_accent_bg,
+            foreground=CONFIG.ui_button_accent_fg,
             font=(CONFIG.ui_font_family, CONFIG.ui_font_size, "bold"),
             borderwidth=0,
+        )
+        style.map(
+            "Execute.TButton",
+            background=[
+                ("active", CONFIG.ui_button_accent_hover_bg),
+                ("disabled", CONFIG.ui_card_bg),
+            ],
         )
         style.configure(
             "Allow.TButton",
-            background=CONFIG.ui_button_bg,
-            foreground=CONFIG.ui_button_fg,
+            background=CONFIG.ui_status_completed,
+            foreground="#ffffff",
             font=(CONFIG.ui_font_family, CONFIG.ui_font_size, "bold"),
             borderwidth=0,
         )
+        style.map(
+            "Allow.TButton",
+            background=[
+                ("active", CONFIG.ui_button_hover_bg),
+                ("disabled", CONFIG.ui_card_bg),
+            ],
+        )
         style.configure(
             "Deny.TButton",
-            background=CONFIG.ui_button_bg,
-            foreground=CONFIG.ui_button_fg,
+            background=CONFIG.ui_button_danger_bg,
+            foreground=CONFIG.ui_button_danger_fg,
             font=(CONFIG.ui_font_family, CONFIG.ui_font_size, "bold"),
             borderwidth=0,
+        )
+        style.map(
+            "Deny.TButton",
+            background=[
+                ("active", CONFIG.ui_button_danger_hover_bg),
+                ("disabled", CONFIG.ui_card_bg),
+            ],
         )
         # Casillas de verificación (antes no estaban configuradas).
         style.configure(
@@ -3551,6 +5174,109 @@ class Dashboard:
             "Card.TCheckbutton",
             background=[("active", CONFIG.ui_card_bg)],
             foreground=[("disabled", CONFIG.ui_status_cancelled)],
+        )
+        # Barras de desplazamiento (vertical y horizontal).
+        style.configure(
+            "TScrollbar",
+            background=CONFIG.ui_scrollbar_thumb,
+            troughcolor=CONFIG.ui_scrollbar_trough,
+            bordercolor=CONFIG.ui_scrollbar_trough,
+            lightcolor=CONFIG.ui_scrollbar_thumb,
+            darkcolor=CONFIG.ui_scrollbar_thumb,
+            arrowcolor=CONFIG.ui_scrollbar_arrow,
+            relief="flat",
+            borderwidth=0,
+            arrowsize=12,
+        )
+        style.map(
+            "TScrollbar",
+            background=[
+                ("pressed", CONFIG.ui_scrollbar_thumb_hover),
+                ("active", CONFIG.ui_scrollbar_thumb_hover),
+            ],
+            lightcolor=[
+                ("pressed", CONFIG.ui_scrollbar_thumb_hover),
+                ("active", CONFIG.ui_scrollbar_thumb_hover),
+            ],
+            darkcolor=[
+                ("pressed", CONFIG.ui_scrollbar_thumb_hover),
+                ("active", CONFIG.ui_scrollbar_thumb_hover),
+            ],
+        )
+        # Pestañas de tareas (Notebook).
+        style.configure(
+            "TNotebook",
+            background=CONFIG.ui_card_bg,
+            bordercolor=CONFIG.ui_card_bg,
+            lightcolor=CONFIG.ui_card_bg,
+            darkcolor=CONFIG.ui_card_bg,
+            borderwidth=0,
+            tabmargins=(0, 0, 0, 0),
+        )
+        style.configure(
+            "TNotebook.Tab",
+            background=CONFIG.ui_tab_bg,
+            foreground=CONFIG.ui_tab_fg,
+            bordercolor=CONFIG.ui_card_bg,
+            lightcolor=CONFIG.ui_tab_bg,
+            darkcolor=CONFIG.ui_tab_bg,
+            focuscolor=CONFIG.ui_tab_bg,
+            padding=(14, 6),
+            borderwidth=0,
+            font=(CONFIG.ui_font_family, CONFIG.ui_font_size),
+        )
+        style.map(
+            "TNotebook.Tab",
+            background=[
+                ("selected", CONFIG.ui_tab_selected_bg),
+                ("active", CONFIG.ui_tab_hover_bg),
+            ],
+            foreground=[
+                ("selected", CONFIG.ui_tab_selected_fg),
+                ("active", CONFIG.ui_fg_color),
+            ],
+            lightcolor=[("selected", CONFIG.ui_accent_color)],
+            bordercolor=[("selected", CONFIG.ui_card_bg)],
+            focuscolor=[("selected", CONFIG.ui_tab_selected_bg)],
+            expand=[("selected", (0, 0, 0, 0))],
+        )
+        style.configure("TSeparator", background=CONFIG.ui_separator_color)
+        # Campos de entrada y listas desplegables (diálogo de ajustes).
+        for _name in ("TEntry", "TCombobox"):
+            style.configure(
+                _name,
+                fieldbackground=CONFIG.ui_prompt_bg,
+                background=CONFIG.ui_button_bg,
+                foreground=CONFIG.ui_prompt_fg,
+                insertcolor=CONFIG.ui_prompt_fg,
+                bordercolor=CONFIG.ui_card_border_color,
+                lightcolor=CONFIG.ui_card_border_color,
+                darkcolor=CONFIG.ui_card_border_color,
+                arrowcolor=CONFIG.ui_scrollbar_arrow,
+                selectbackground=CONFIG.ui_browser_selected_bg,
+                selectforeground=CONFIG.ui_browser_selected_fg,
+                padding=4,
+            )
+            style.map(
+                _name,
+                bordercolor=[("focus", CONFIG.ui_accent_color)],
+                lightcolor=[("focus", CONFIG.ui_accent_color)],
+                darkcolor=[("focus", CONFIG.ui_accent_color)],
+                fieldbackground=[("readonly", CONFIG.ui_prompt_bg)],
+                foreground=[("readonly", CONFIG.ui_prompt_fg)],
+                selectbackground=[("readonly", CONFIG.ui_prompt_bg)],
+                selectforeground=[("readonly", CONFIG.ui_prompt_fg)],
+            )
+        # Lista desplegable de los Combobox (es un Listbox clásico de Tk).
+        self.root.option_add("*TCombobox*Listbox.background", CONFIG.ui_prompt_bg)
+        self.root.option_add("*TCombobox*Listbox.foreground", CONFIG.ui_prompt_fg)
+        self.root.option_add("*TCombobox*Listbox.selectBackground", CONFIG.ui_browser_selected_bg)
+        self.root.option_add("*TCombobox*Listbox.selectForeground", CONFIG.ui_browser_selected_fg)
+        style.configure(
+            "Muted.TLabel",
+            background=CONFIG.ui_card_bg,
+            foreground=CONFIG.ui_tab_fg,
+            font=(CONFIG.ui_font_family, max(8, CONFIG.ui_font_size - 1)),
         )
 
     # --- Layout ---
@@ -3602,35 +5328,82 @@ class Dashboard:
 
     def _build_layout(self) -> None:
         # ------------------------------------------------------------------
-        # Distribución vertical del dashboard:
+        # Distribución vertical del dashboard (nuevo diseño):
         #
         #   ┌──────────────────────────────────────────────┐
         #   │  Zona 1: Prompt + Ejecutar   (top, fijo)     │  ← SIEMPRE visible
         #   ├──────────────────────────────────────────────┤
         #   │                                              │
-        #   │  Zona 2: Tablero 2 columnas  (middle)        │  ← se reduce
+        #   │  Zona 2 (PROMINENTE):                        │
+        #   │  ┌────────────────┬────────────────────────┐ │
+        #   │  │                │  [Tarea en curso]      │ │
+        #   │  │   Historial    │  [Tareas terminadas]   │ │
+        #   │  │   (izquierda)  │  (derecha, tabs)       │ │
+        #   │  │                │                        │ │
+        #   │  └────────────────┴────────────────────────┘ │
         #   │                                              │
         #   ├──────────────────────────────────────────────┤
-        #   │  Zona 3: Historial           (bottom)        │  ← se reduce
+        #   │  Zona 3: Explorador de ficheros (bottom)     │  ← se reduce
         #   ├──────────────────────────────────────────────┤
-        #   │  Zona 4: Permisos (HITL)     (bottom, fijo)  │  ← SIEMPRE visible
+        #   │  Barra de contexto           (bottom, fijo)  │  ← SIEMPRE visible
         #   └──────────────────────────────────────────────┘
         #
-        # Las zonas 1 y 4 se empaquetan primero y último respectivamente,
-        # de modo que si la ventana se reduce verticalmente el espacio
-        # sobrante se recorta de las zonas 2 y 3, manteniendo prompt y
-        # permisos siempre visibles.
+        # Las solicitudes de aprobación (HITL) se muestran ahora como
+        # POPUP modal (Toplevel) en lugar de un panel inline, para dar
+        # más protagonismo al historial y a las tareas.
+        #
+        # Los marcos principales usan RoundedFrame (esquinas redondeadas,
+        # borde sutil y sombra simulada) para conseguir un aspecto moderno.
+        # Los botones usan RoundedButton con efectos hover/pressed animados.
         # ------------------------------------------------------------------
+
+        # Barra de título personalizada (overrideredirect). Solo se crea
+        # si está habilitada en config.ini. Se empaqueta en la parte
+        # superior, antes del resto de zonas, para que ocupe siempre la
+        # primera fila del layout.
+        if CONFIG.ui_custom_titlebar:
+            self.title_bar = CustomTitleBar(
+                self.root,
+                title="Hercules",
+                icon="\u2694",  # ⚔
+                bg=CONFIG.ui_titlebar_color,
+                fg=CONFIG.ui_titlebar_text_color,
+                hover_bg=CONFIG.ui_button_hover_bg,
+                close_hover_bg=CONFIG.ui_button_danger_bg,
+                height=CONFIG.ui_custom_titlebar_height,
+                show_minimize=True,
+                show_maximize=True,
+                close_callback=self.root.destroy,
+                settings_callback=self._open_settings,
+            )
+            self.title_bar.pack(side="top", fill="x")
 
         # Zona 1: Prompt + Ejecutar (superior) — SIEMPRE VISIBLE.
         top = ttk.Frame(self.root, style="TFrame", padding=10)
         top.pack(side="top", fill="x")
 
+        # Sin barra de título personalizada, el botón de ajustes va en la esquina superior derecha.
+        if not CONFIG.ui_custom_titlebar:
+            ttk.Button(
+                top, text="\u2699", width=3, command=self._open_settings
+            ).place(relx=1.0, x=0, y=0, anchor="ne")
+
         ttk.Label(top, text="📝 Nueva instrucción para el agente", style="Title.TLabel").pack(
             anchor="w"
         )
-        self.prompt_text = Text(
+
+        # Caja del prompt con esquinas redondeadas.
+        prompt_card = RoundedFrame(
             top,
+            bg=CONFIG.ui_prompt_bg,
+            border_color=CONFIG.ui_card_border_color,
+            border_width=CONFIG.ui_card_border_width,
+            radius=CONFIG.ui_corner_radius,
+            padding=2,
+        )
+        prompt_card.pack(fill="x", pady=(6, 6))
+        self.prompt_text = Text(
+            prompt_card.inner,
             height=4,
             wrap="word",
             font=(CONFIG.ui_mono_font_family, CONFIG.ui_mono_font_size),
@@ -3638,27 +5411,65 @@ class Dashboard:
             borderwidth=0,
             background=CONFIG.ui_prompt_bg,
             foreground=CONFIG.ui_prompt_fg,
+            insertbackground=CONFIG.ui_prompt_fg,
+            selectbackground=CONFIG.ui_browser_selected_bg,
             highlightthickness=0,
+            padx=8,
+            pady=6,
         )
-        self.prompt_text.pack(fill="x", pady=(6, 6))
+        self.prompt_text.pack(fill="both", expand=True)
+        # Las ventanas overrideredirect no reciben foco de teclado del WM.
+        self.prompt_text.bind("<Button-1>", lambda _e: self.prompt_text.focus_force())
+        self.root.after(300, self.prompt_text.focus_force)
 
         btn_row = ttk.Frame(top, style="TFrame")
         btn_row.pack(fill="x")
-        ttk.Button(
+        # Botón principal "Ejecutar" con color de acento.
+        RoundedButton(
             btn_row,
             text="▶ Ejecutar",
-            style="Execute.TButton",
             command=self._on_execute,
+            bg=CONFIG.ui_button_accent_bg,
+            fg=CONFIG.ui_button_accent_fg,
+            hover_bg=CONFIG.ui_button_accent_hover_bg,
+            pressed_bg=CONFIG.ui_button_accent_pressed_bg,
+            radius=CONFIG.ui_corner_radius,
+            font=(CONFIG.ui_font_family, CONFIG.ui_font_size, "bold"),
+            padding_x=18,
+            padding_y=8,
         ).pack(side="left")
-        ttk.Button(
+        RoundedButton(
             btn_row,
             text="🧹 Limpiar",
             command=self._on_clear_prompt,
+            bg=CONFIG.ui_button_bg,
+            fg=CONFIG.ui_button_fg,
+            hover_bg=CONFIG.ui_button_hover_bg,
+            pressed_bg=CONFIG.ui_button_pressed_bg,
+            radius=CONFIG.ui_corner_radius,
+            padding_x=14,
+            padding_y=6,
         ).pack(side="left", padx=(8, 0))
-        ttk.Button(
+        RoundedButton(
             btn_row,
             text="🗑 Borrar tareas terminadas",
             command=self._on_delete_finished_tasks,
+            bg=CONFIG.ui_button_bg,
+            fg=CONFIG.ui_button_fg,
+            hover_bg=CONFIG.ui_button_hover_bg,
+            pressed_bg=CONFIG.ui_button_pressed_bg,
+            radius=CONFIG.ui_corner_radius,
+            padding_x=14,
+            padding_y=6,
+        ).pack(side="left", padx=(8, 0))
+        # Casilla global de preautorización: cuando está marcada, todas
+        # las solicitudes se consultan primero con el LLM y solo las que
+        # el modelo deniega se muestran al usuario como popup.
+        ttk.Checkbutton(
+            btn_row,
+            text="🤖 Preautorizar",
+            variable=self.preauth_var,
+            style="Card.TCheckbutton",
         ).pack(side="left", padx=(8, 0))
         self.config_label = ttk.Label(
             btn_row,
@@ -3667,94 +5478,69 @@ class Dashboard:
         )
         self.config_label.pack(side="right")
 
-        # Zona 4: Aviso de aprobación (condicional, parte inferior) — SIEMPRE VISIBLE.
-        # Se empaqueta con side="bottom" antes que las zonas 2 y 3 para que
-        # tenga prioridad y no quede oculto si la ventana se reduce verticalmente.
-        self.approval_frame = ttk.Frame(self.root, style="Card.TFrame", padding=10)
-        self.approval_frame.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
-        self._build_approval_panel()
-
         # Barra de progreso de consumo de tokens — SIEMPRE VISIBLE.
-        # Se empaqueta con side="bottom" DESPUÉS del panel de aprobación, por
-        # lo que tkinter la coloca visualmente ENCIMA de dicho panel. Al estar
-        # fuera del contenedor intermedio (que es el que se reduce al
-        # redimensionar la ventana), nunca queda oculta.
+        # Se empaqueta con side="bottom" para que quede en la parte
+        # inferior de la ventana y nunca quede oculta al redimensionar.
         self._build_context_bar()
 
         # Contenedor intermedio que ocupa el espacio restante entre el prompt
-        # (arriba) y la barra de contexto (abajo). Alberga las zonas 2 y 3.
+        # (arriba) y la barra de contexto (abajo). Alberga la zona 2 (prominente)
+        # y la zona 3 (explorador de ficheros).
         middle_container = ttk.Frame(self.root, style="TFrame")
         middle_container.pack(side="top", fill="both", expand=True)
         middle_container.pack_propagate(False)
 
-        # Zona 2: Tablero 2 columnas (medio).
-        # Altura fija para que el tablero no crezca al añadir tareas y desplace
-        # los botones de aprobación fuera de la pantalla.
-        middle = ttk.Frame(middle_container, style="TFrame", padding=(10, 0))
-        middle.pack(side="top", fill="x")
-        middle.pack_propagate(False)
-        middle.configure(height=420)
-        middle.columnconfigure(0, weight=1)
-        middle.columnconfigure(1, weight=1)
-        middle.rowconfigure(1, weight=1)
-
-        ttk.Label(
-            middle,
-            text="📋 Tablero de tareas",
-            style="Title.TLabel",
-        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
-
-        # Columna izquierda: pendientes / en ejecución.
-        left = ttk.Frame(middle, style="Card.TFrame", padding=8)
-        left.grid(row=1, column=0, sticky="nsew", padx=(0, 5))
-        ttk.Label(
-            left,
-            text="Pendientes y en ejecución",
-            style="Header.TLabel",
-        ).pack(anchor="w")
-        self.left_list_frame = self._make_scrollable_frame(left)
-
-        # Columna derecha: ejecutadas / históricas.
-        right = ttk.Frame(middle, style="Card.TFrame", padding=8)
-        right.grid(row=1, column=1, sticky="nsew", padx=(5, 0))
-        ttk.Label(
-            right,
-            text="Ejecutadas / Históricas",
-            style="Header.TLabel",
-        ).pack(anchor="w")
-        self.right_list_frame = self._make_scrollable_frame(right)
-
-        # Zona 3: Historial por tarea (izquierda) + Explorador de ficheros (derecha).
-        # Es la zona que se reduce primero cuando la ventana pierde altura,
-        # preservando el prompt y el panel de aprobación.
-        # El ancho se reparte 50/50 entre historial (columna 0) y explorador
-        # (columna 1) mediante columnconfigure(weight=1) en ambos.
-        bottom = ttk.Frame(middle_container, style="TFrame", padding=(10, 8, 10, 4))
-        bottom.pack(side="top", fill="both", expand=True)
-        bottom.columnconfigure(0, weight=1)  # Historial: 50%
-        bottom.columnconfigure(1, weight=1)  # Explorador: 50%
-        bottom.rowconfigure(0, weight=1)
+        # ==================================================================
+        # Zona 2 (PROMINENTE): Historial (izquierda) + Tabs (derecha)
+        # ==================================================================
+        # Esta zona ocupa la mayor parte del espacio disponible. Se divide
+        # en dos columnas:
+        #   - Izquierda (50%): Historial de la tarea seleccionada.
+        #   - Derecha (50%): Notebook con dos pestañas:
+        #       * "Tarea en curso": tareas activas (PENDING, IN_PROGRESS,
+        #         AWAITING_APPROVAL) con sus subtareas anidadas.
+        #       * "Tareas terminadas": tareas en estado terminal
+        #         (COMPLETED, FAILED, CANCELLED).
+        prominent = ttk.Frame(middle_container, style="TFrame", padding=(10, 0, 10, 6))
+        prominent.pack(side="top", fill="both", expand=True)
+        prominent.columnconfigure(0, weight=1)  # Historial: 50%
+        prominent.columnconfigure(1, weight=1)  # Tabs: 50%
+        prominent.rowconfigure(0, weight=1)
 
         # --- Columna izquierda: Historial de la tarea seleccionada ---
-        history_panel = ttk.Frame(bottom, style="Card.TFrame", padding=8)
+        history_panel = RoundedFrame(
+            prominent,
+            bg=CONFIG.ui_card_bg,
+            border_color=CONFIG.ui_card_border_color,
+            border_width=CONFIG.ui_card_border_width,
+            radius=CONFIG.ui_corner_radius,
+            padding=10,
+        )
         history_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
 
-        history_header = ttk.Frame(history_panel, style="Card.TFrame")
+        history_header = ttk.Frame(history_panel.inner, style="Card.TFrame")
         history_header.pack(fill="x")
-        self.history_title_var = StringVar(value="Historial de tarea (ninguna seleccionada)")
+        self.history_title_var = StringVar(value="📜 Historial de tarea (ninguna seleccionada)")
         ttk.Label(
             history_header,
             textvariable=self.history_title_var,
             style="Header.TLabel",
         ).pack(side="left")
-        ttk.Button(
+        RoundedButton(
             history_header,
             text="🔄 Refrescar",
             command=self._refresh_task_lists,
+            bg=CONFIG.ui_button_bg,
+            fg=CONFIG.ui_button_fg,
+            hover_bg=CONFIG.ui_button_hover_bg,
+            pressed_bg=CONFIG.ui_button_pressed_bg,
+            radius=CONFIG.ui_corner_radius,
+            padding_x=12,
+            padding_y=4,
         ).pack(side="right")
 
         self.history_view = ScrolledText(
-            history_panel,
+            history_panel.inner,
             height=12,
             wrap="word",
             font=(CONFIG.ui_mono_font_family, CONFIG.ui_mono_font_size - 1),
@@ -3764,6 +5550,8 @@ class Dashboard:
             relief="flat",
             borderwidth=0,
             highlightthickness=0,
+            padx=6,
+            pady=6,
         )
         # Tags de color para resaltar tipos de evento en el historial.
         # Solo cambia el color del texto; el fondo se mantiene igual.
@@ -3821,13 +5609,75 @@ class Dashboard:
             "context_overflow",
             foreground=CONFIG.ui_context_overflow_fg,
         )
+        _use_ttk_scrollbar(self.history_view)
         self.history_view.pack(fill="both", expand=True, pady=(6, 0))
 
-        # --- Columna derecha: Explorador de ficheros del workspace ---
-        browser_panel = ttk.Frame(bottom, style="Card.TFrame", padding=8)
-        browser_panel.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+        # --- Columna derecha: Notebook con tabs "Tarea en curso" / "Tareas terminadas" ---
+        tabs_panel = RoundedFrame(
+            prominent,
+            bg=CONFIG.ui_card_bg,
+            border_color=CONFIG.ui_card_border_color,
+            border_width=CONFIG.ui_card_border_width,
+            radius=CONFIG.ui_corner_radius,
+            padding=10,
+        )
+        tabs_panel.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
 
-        browser_header = ttk.Frame(browser_panel, style="Card.TFrame")
+        # Título del panel de tabs.
+        tabs_header = ttk.Frame(tabs_panel.inner, style="Card.TFrame")
+        tabs_header.pack(fill="x")
+        ttk.Label(
+            tabs_header,
+            text="📋 Tareas",
+            style="Header.TLabel",
+        ).pack(side="left")
+        RoundedButton(
+            tabs_header,
+            text="🔄 Refrescar",
+            command=self._refresh_task_lists,
+            bg=CONFIG.ui_button_bg,
+            fg=CONFIG.ui_button_fg,
+            hover_bg=CONFIG.ui_button_hover_bg,
+            pressed_bg=CONFIG.ui_button_pressed_bg,
+            radius=CONFIG.ui_corner_radius,
+            padding_x=12,
+            padding_y=4,
+        ).pack(side="right")
+
+        # Notebook (pestañas) con dos páginas.
+        self.task_notebook = ttk.Notebook(tabs_panel.inner)
+        self.task_notebook.pack(fill="both", expand=True, pady=(6, 0))
+
+        # --- Pestaña 1: Tarea en curso ---
+        self.tab_current = ttk.Frame(self.task_notebook, style="Card.TFrame", padding=4)
+        self.task_notebook.add(self.tab_current, text="▶ Tarea en curso")
+        self.current_list_frame = self._make_scrollable_frame(self.tab_current)
+
+        # --- Pestaña 2: Tareas terminadas ---
+        self.tab_finished = ttk.Frame(self.task_notebook, style="Card.TFrame", padding=4)
+        self.task_notebook.add(self.tab_finished, text="✅ Tareas terminadas")
+        self.finished_list_frame = self._make_scrollable_frame(self.tab_finished)
+
+        # ==================================================================
+        # Zona 3: Explorador de ficheros del workspace (parte inferior)
+        # ==================================================================
+        # Altura fija reducida para dar más protagonismo a la zona 2.
+        browser_container = ttk.Frame(middle_container, style="TFrame", padding=(10, 0, 10, 6))
+        browser_container.pack(side="top", fill="x")
+        browser_container.pack_propagate(False)
+        browser_container.configure(height=220)
+
+        browser_panel = RoundedFrame(
+            browser_container,
+            bg=CONFIG.ui_card_bg,
+            border_color=CONFIG.ui_card_border_color,
+            border_width=CONFIG.ui_card_border_width,
+            radius=CONFIG.ui_corner_radius,
+            padding=8,
+        )
+        browser_panel.pack(fill="both", expand=True)
+
+        browser_header = ttk.Frame(browser_panel.inner, style="Card.TFrame")
         browser_header.pack(fill="x")
         self.browser_title_var = StringVar(value=f"📁 Explorador: {WORKSPACE_DIR}")
         ttk.Label(
@@ -3837,22 +5687,36 @@ class Dashboard:
         ).pack(side="left")
         browser_btns = ttk.Frame(browser_header, style="Card.TFrame")
         browser_btns.pack(side="right")
-        ttk.Button(
+        RoundedButton(
             browser_btns,
             text="⬆ Padre",
             command=self._on_browser_up,
+            bg=CONFIG.ui_button_bg,
+            fg=CONFIG.ui_button_fg,
+            hover_bg=CONFIG.ui_button_hover_bg,
+            pressed_bg=CONFIG.ui_button_pressed_bg,
+            radius=CONFIG.ui_corner_radius,
+            padding_x=12,
+            padding_y=4,
         ).pack(side="left")
-        ttk.Button(
+        RoundedButton(
             browser_btns,
             text="🔄 Refrescar",
             command=self._refresh_file_browser,
+            bg=CONFIG.ui_button_bg,
+            fg=CONFIG.ui_button_fg,
+            hover_bg=CONFIG.ui_button_hover_bg,
+            pressed_bg=CONFIG.ui_button_pressed_bg,
+            radius=CONFIG.ui_corner_radius,
+            padding_x=12,
+            padding_y=4,
         ).pack(side="left", padx=(4, 0))
 
         # Ruta actual del explorador (relativa al workspace).
         self._browser_current_dir: Path = WORKSPACE_DIR
         # Treeview con scrollbar para mostrar el contenido del directorio.
-        browser_body = ttk.Frame(browser_panel, style="Card.TFrame")
-        browser_body.pack(fill="both", expand=True, pady=(6, 0))
+        browser_body = ttk.Frame(browser_panel.inner, style="Card.TFrame")
+        browser_body.pack(fill="both", expand=True, pady=(4, 0))
 
         self.browser_tree = ttk.Treeview(
             browser_body,
@@ -3883,9 +5747,19 @@ class Dashboard:
 
         # Almacén de uso de contexto por tarea. La barra visual se construye
         # en _build_context_bar() como un frame independiente en self.root,
-        # empaquetado con side="bottom" justo encima del panel de aprobación,
-        # para que permanezca visible aunque la ventana se reduzca.
+        # empaquetado con side="bottom" para que permanezca visible aunque
+        # la ventana se reduzca.
         self._context_usage: Dict[int, Dict[str, int]] = {}
+
+        # Cola FIFO de solicitudes de aprobación pendientes. Cada solicitud
+        # se muestra como un popup modal (ApprovalPopup). Cuando el usuario
+        # resuelve la solicitud actual, se muestra automáticamente la
+        # siguiente de la cola (si queda alguna).
+        self._approval_queue: "collections.deque[Dict[str, Any]]" = collections.deque()
+        # Popup actualmente visible (None si no hay ninguno).
+        self._current_approval_popup: Optional[ApprovalPopup] = None
+        # ``self.preauth_var`` se crea en __init__ antes de _build_layout; no
+        # recrearla aquí, o la casilla quedaría desvinculada de la variable.
 
     def _build_context_bar(self) -> None:
         """Crea la barra de progreso de consumo de tokens como frame propio.
@@ -3894,23 +5768,28 @@ class Dashboard:
         aprobación, de modo que quede visualmente **encima** de dicho panel
         y nunca quede oculta al redimensionar la ventana (el área que se
         reduce es el contenedor intermedio con las zonas 2 y 3).
+
+        La barra usa un GradientCanvas con esquinas redondeadas para
+        conseguir un aspecto moderno.
         """
-        context_frame = ttk.Frame(self.root, style="Card.TFrame", padding=(10, 4))
+        context_frame = ttk.Frame(self.root, style="TFrame", padding=(10, 4))
         context_frame.pack(side="bottom", fill="x", padx=10, pady=(0, 4))
 
         ttk.Label(
             context_frame,
             text="📊 Contexto:",
-            style="Card.TLabel",
+            style="TLabel",
         ).pack(side="left")
 
-        self.context_canvas = Canvas(
+        # Barra de progreso con esquinas redondeadas.
+        bar_radius = max(0, CONFIG.ui_corner_radius - 4)
+        self.context_canvas = GradientCanvas(
             context_frame,
+            color_top=CONFIG.ui_context_bar_bg,
+            color_bottom=CONFIG.ui_context_bar_bg,
+            radius=bar_radius,
+            corner_bg=CONFIG.ui_frame_bg,
             height=16,
-            bg=CONFIG.ui_context_bar_bg,
-            highlightthickness=1,
-            highlightbackground=CONFIG.ui_fg_color,
-            borderwidth=0,
         )
         self.context_canvas.pack(side="left", fill="x", expand=True, padx=(6, 6))
         self.context_canvas.bind("<Configure>", self._on_context_canvas_configure)
@@ -3919,98 +5798,8 @@ class Dashboard:
         ttk.Label(
             context_frame,
             textvariable=self.context_label_var,
-            style="Card.TLabel",
+            style="TLabel",
         ).pack(side="right")
-
-    def _build_approval_panel(self) -> None:
-        for child in self.approval_frame.winfo_children():
-            child.destroy()
-
-        header = ttk.Frame(self.approval_frame, style="Card.TFrame")
-        header.pack(fill="x")
-        # Encabezado dinámico: muestra el contador de solicitudes pendientes
-        # cuando hay más de una en cola.
-        self.approval_header_var = StringVar(
-            value="⚠ Control de permisos (Human-in-the-Loop)"
-        )
-        ttk.Label(
-            header,
-            textvariable=self.approval_header_var,
-            style="Header.TLabel",
-        ).pack(side="left")
-
-        self.approval_info_var = StringVar(value="Sin solicitudes pendientes.")
-        ttk.Label(
-            self.approval_frame,
-            textvariable=self.approval_info_var,
-            style="Card.TLabel",
-            wraplength=1200,
-            justify="left",
-        ).pack(anchor="w", pady=(6, 6))
-
-        # Indicador de estado de preautorización: muestra "🤖 Preautorizando…"
-        # mientras el LLM está evaluando una solicitud CRITICAL. Se oculta
-        # (cadena vacía) cuando no hay preautorización en curso.
-        self.preauth_status_var = StringVar(value="")
-        ttk.Label(
-            self.approval_frame,
-            textvariable=self.preauth_status_var,
-            style="Card.TLabel",
-            foreground=CONFIG.ui_info_fg,
-        ).pack(anchor="w", pady=(0, 4))
-
-        self.approval_args_view = ScrolledText(
-            self.approval_frame,
-            height=4,
-            wrap="word",
-            font=(CONFIG.ui_mono_font_family, CONFIG.ui_mono_font_size - 1),
-            state="disabled",
-            background=CONFIG.ui_approval_bg,
-            foreground=CONFIG.ui_approval_fg,
-            relief="flat",
-            borderwidth=0,
-            highlightthickness=0,
-        )
-        self.approval_args_view.pack(fill="x", pady=(0, 6))
-
-        btn_row = ttk.Frame(self.approval_frame, style="Card.TFrame")
-        btn_row.pack(fill="x")
-        self.allow_btn = ttk.Button(
-            btn_row,
-            text="✅ Permitir",
-            style="Allow.TButton",
-            command=lambda: self._resolve_approval(True),
-            state="disabled",
-        )
-        self.allow_btn.pack(side="left")
-        self.deny_btn = ttk.Button(
-            btn_row,
-            text="❌ Cancelar",
-            style="Deny.TButton",
-            command=lambda: self._resolve_approval(False),
-            state="disabled",
-        )
-        self.deny_btn.pack(side="left", padx=(8, 0))
-
-        # Casilla "preautorizar": cuando está marcada, las solicitudes de
-        # aprobación se consultan al LLM antes de mostrarse al usuario.
-        # Si el modelo responde afirmativamente, la acción se autoriza
-        # automáticamente; si no, queda pendiente para decisión humana.
-        # El prompt se envía SEPARADO del contexto del agente (no se añade
-        # a la conversación principal ni al historial de la tarea).
-        self.preauth_var = BooleanVar(value=False)
-        ttk.Checkbutton(
-            btn_row,
-            text="🤖 Preautorizar",
-            variable=self.preauth_var,
-            style="Card.TCheckbutton",
-        ).pack(side="right")
-
-        # Cola FIFO de solicitudes de aprobación pendientes. Permite que
-        # múltiples tareas en estado AWAITING_APPROVAL coexistan sin que
-        # una solicitud sobrescriba a otra en la UI.
-        self._approval_queue: "collections.deque[Dict[str, Any]]" = collections.deque()
-        self._update_approval_header()
 
     # --- Acciones de la Zona 1 ---
 
@@ -4056,6 +5845,7 @@ class Dashboard:
         # → Rectificación si falla) y las ejecutará secuencialmente.
         task = self.db.create_task(title=title, prompt=prompt)
         self._on_clear_prompt()
+        self._follow_active_task = True
         self._refresh_task_lists()
         self._select_task(task.id)
         # Lanza el orquestador en hilo separado.
@@ -4069,8 +5859,8 @@ class Dashboard:
     # --- Tablero de tareas ---
 
     def _refresh_task_lists(self) -> None:
-        # Limpia columnas.
-        for frame in (self.left_list_frame, self.right_list_frame):
+        # Limpia las dos pestañas del notebook.
+        for frame in (self.current_list_frame, self.finished_list_frame):
             for child in frame.winfo_children():
                 child.destroy()
 
@@ -4099,25 +5889,27 @@ class Dashboard:
         active_parents = [t for t in active if t.parent_task_id is None]
         finished_parents = [t for t in finished if t.parent_task_id is None]
 
+        # --- Pestaña "Tarea en curso": tareas activas ---
         if not active_parents:
             ttk.Label(
-                self.left_list_frame,
+                self.current_list_frame,
                 text="(sin tareas activas)",
                 style="Card.TLabel",
             ).pack(anchor="w", pady=4)
         else:
             for t in active_parents:
-                self._render_task_with_subtasks(self.left_list_frame, t)
+                self._render_task_with_subtasks(self.current_list_frame, t)
 
+        # --- Pestaña "Tareas terminadas": tareas en estado terminal ---
         if not finished_parents:
             ttk.Label(
-                self.right_list_frame,
+                self.finished_list_frame,
                 text="(sin tareas finalizadas)",
                 style="Card.TLabel",
             ).pack(anchor="w", pady=4)
         else:
             for t in finished_parents:
-                self._render_task_with_subtasks(self.right_list_frame, t)
+                self._render_task_with_subtasks(self.finished_list_frame, t)
 
         # Si la tarea seleccionada ya no existe, limpia el historial.
         if self.selected_task_id is not None:
@@ -4206,9 +5998,14 @@ class Dashboard:
         btn = ttk.Button(
             row,
             text="Ver",
-            command=lambda tid=task.id: self._select_task(tid),
+            command=lambda tid=task.id: self._on_view_task(tid),
         )
         btn.pack(side="right")
+
+    def _on_view_task(self, task_id: Optional[int]) -> None:
+        """Selección manual desde el botón "Ver": detiene el seguimiento automático."""
+        self._follow_active_task = False
+        self._select_task(task_id)
 
     @staticmethod
     def _tag_for_event(event_type: EventType) -> Optional[str]:
@@ -4279,7 +6076,10 @@ class Dashboard:
 
     def _redraw_context_bar(self) -> None:
         """Redibuja la barra de contexto con el valor de la tarea seleccionada."""
-        self.context_canvas.delete("all")
+        # El GradientCanvas ya dibujó el fondo redondeado; solo añadimos
+        # el rectángulo de progreso encima (también con esquinas redondeadas
+        # para mantener la coherencia visual).
+        self.context_canvas.delete("fill")
         width = self.context_canvas.winfo_width()
         if width <= 1:
             return
@@ -4301,9 +6101,16 @@ class Dashboard:
             color = CONFIG.ui_context_bar_high
 
         if fill_width > 0:
-            self.context_canvas.create_rectangle(
+            # Usar esquinas redondeadas para el relleno, con un radio
+            # ligeramente menor que el del fondo para que se vea "dentro".
+            fill_radius = max(0, (CONFIG.ui_corner_radius - 4) - 1)
+            _draw_rounded_rect(
+                self.context_canvas,
                 0, 0, fill_width, height,
-                fill=color, outline="",
+                radius=fill_radius,
+                fill=color,
+                outline="",
+                tags="fill",
             )
 
     def _refresh_context_bar(self) -> None:
@@ -4337,51 +6144,40 @@ class Dashboard:
         if task_id == self.selected_task_id:
             self._refresh_context_bar()
 
-    # --- Zona 4: aprobación ---
+    # --- Zona de aprobación (ahora como popup modal) ---
 
-    def _resolve_approval(self, granted: bool) -> None:
-        if not self._approval_queue:
-            return
-        # Extrae la primera solicitud de la cola (FIFO) y la resuelve.
-        current = self._approval_queue.popleft()
-        request_id = current["request_id"]
-        task_id = current["task_id"]
-        tool_name = current["tool_name"]
+    def _resolve_specific_approval(self, event: Dict[str, Any], granted: bool) -> None:
+        """
+        Resuelve una solicitud de aprobación concreta (la del popup actual).
+
+        - Si la solicitud está al frente de la cola, la extrae y la resuelve.
+        - Si está en otra posición (caso raro), la busca y la elimina.
+        - Cierra el popup actual y muestra el siguiente si queda alguno.
+        """
+        request_id = event["request_id"]
+        task_id = event["task_id"]
+
+        # Extraer la solicitud de la cola (puede estar en cualquier posición).
+        try:
+            self._approval_queue.remove(event)
+        except ValueError:
+            pass
+
         self.permissions.resolve(
             request_id,
             granted,
             reason="permitido por el usuario" if granted else "cancelado por el usuario",
         )
-        # Muestra feedback inmediato de la decisión sobre la solicitud resuelta.
-        if granted:
-            # Aprobado: fondo verde muy claro, texto negro.
-            self.approval_info_var.set(
-                f"✅ Aprobado: herramienta '{tool_name}' permitida."
-            )
-            bg, fg = CONFIG.ui_approval_granted_bg, CONFIG.ui_approval_granted_fg
-        else:
-            # Denegado: fondo rojo claro, texto negro.
-            self.approval_info_var.set(
-                f"❌ Denegado: herramienta '{tool_name}' cancelada."
-            )
-            bg, fg = CONFIG.ui_approval_denied_bg, CONFIG.ui_approval_denied_fg
-        self.approval_args_view.configure(background=bg, foreground=fg)
-        self.approval_args_view.configure(state="normal")
-        self.approval_args_view.delete("1.0", "end")
-        self.approval_args_view.configure(state="disabled")
+
         # Refresca tablero e historial.
         self._refresh_task_lists()
         if task_id == self.selected_task_id:
             self._select_task(task_id)
-        # Si quedan solicitudes pendientes en la cola, muestra la siguiente
-        # automáticamente; si no, deshabilita los botones y actualiza el
-        # encabezado.
+
+        # Cierra el popup actual (si lo hay) y muestra el siguiente.
+        self._current_approval_popup = None
         if self._approval_queue:
             self._render_current_approval()
-        else:
-            self.allow_btn.configure(state="disabled")
-            self.deny_btn.configure(state="disabled")
-            self._update_approval_header()
 
     # --- Polling de la cola UI -> agente ---
 
@@ -4398,38 +6194,12 @@ class Dashboard:
         etype = event.get("type")
         if etype == "status_change":
             self._refresh_task_lists()
-            task_id = event.get("task_id")
-            new_status = event.get("status")
-
-            # Estados terminales: la tarea ya terminó y debemos saltar a la siguiente.
-            terminal_statuses = (
-                TaskStatus.COMPLETED.value,
-                TaskStatus.FAILED.value,
-                TaskStatus.CANCELLED.value,
-            )
-            # La tarea seleccionada terminó → saltar a la siguiente activa.
-            active_statuses = self.db.list_tasks([
-                TaskStatus.PENDING,
-                TaskStatus.IN_PROGRESS,
-                TaskStatus.AWAITING_APPROVAL,
-            ])
-
-            # --- Caso 1: la tarea que cambió es la seleccionada ---
-            if task_id == self.selected_task_id:
-                pass
-
-            # --- Caso 2: nada seleccionado y una tarea terminó ---
-            elif new_status in active_statuses or new_status in terminal_statuses:
-                # Buscar la siguiente tarea activa (no la que acaba de terminar).
-                active = self.db.list_tasks([
-                    TaskStatus.PENDING,
-                    TaskStatus.IN_PROGRESS,
-                    TaskStatus.AWAITING_APPROVAL,
-                ])
-                active_parents = [t for t in active if t.parent_task_id is None]
-                if active_parents:
-                    self._select_task(active_parents[0].id)
-                # Si no hay activas, no seleccionamos nada (se queda en "ninguna seleccionada").
+            if self._follow_active_task:
+                in_progress = self.db.list_tasks([TaskStatus.IN_PROGRESS])
+                if in_progress:
+                    latest = max(in_progress, key=lambda t: t.id or 0)
+                    if latest.id != self.selected_task_id:
+                        self._select_task(latest.id)
         elif etype == "history_update":
             if event.get("task_id") == self.selected_task_id:
                 self._select_task(self.selected_task_id)
@@ -4442,17 +6212,18 @@ class Dashboard:
 
     def _show_approval(self, event: Dict[str, Any]) -> None:
         """
-        Encola una nueva solicitud de aprobación y muestra la primera pendiente.
+        Encola una nueva solicitud de aprobación y muestra la primera pendiente
+        como popup modal.
 
         Si la casilla "preautorizar" está marcada, se consulta al LLM en
         segundo plano antes de mostrar la solicitud al usuario. Si el modelo
         responde afirmativamente, la acción se autoriza automáticamente; si
         no, la solicitud queda pendiente para que el usuario la resuelva.
 
-        Si ya hay una solicitud visible, la nueva queda encolada y se mostrará
-        automáticamente cuando el usuario resuelva la actual. Esto evita que
-        una segunda solicitud sobrescriba a la primera y la deje invisible
-        en el panel (el hilo del agente correspondiente quedaría esperando
+        Si ya hay un popup visible, la nueva solicitud queda encolada y se
+        mostrará automáticamente cuando el usuario resuelva la actual. Esto
+        evita que una segunda solicitud sobrescriba a la primera y la deje
+        invisible (el hilo del agente correspondiente quedaría esperando
         hasta el timeout de 10 minutos).
         """
         # Bypass total: resolver directamente sin preauth ni cola de UI.
@@ -4472,71 +6243,51 @@ class Dashboard:
                 self._select_task(event["task_id"])
             return
 
-        # Si la casilla "preautorizar" está marcada, se consulta al LLM
-        # en segundo plano antes de mostrar la solicitud al usuario.
+        # Si la casilla global "Preautorizar" está marcada, consultamos
+        # al LLM en segundo plano antes de mostrar nada al usuario. Solo
+        # las solicitudes que el LLM deniegue acabarán en un popup.
         if self.preauth_var.get():
-            self._start_preauthorization(event)
+            self._start_preauthorization_for_event(event, popup=None)
             return
+
+        # Modo normal: encolar y mostrar popup directamente.
         self._approval_queue.append(event)
         # Notificación visual siempre que llegue una nueva solicitud.
         try:
             self.root.bell()
         except Exception:  # noqa: BLE001
             pass
-        # Si ya había una solicitud visible, la nueva queda encolada.
+        # Si ya había un popup visible, la nueva queda encolada.
         if len(self._approval_queue) > 1:
-            self._update_approval_header()
             return
         self._render_current_approval()
 
-    def _start_preauthorization(self, event: Dict[str, Any]) -> None:
+    def _start_preauthorization_for_event(
+        self,
+        event: Dict[str, Any],
+        popup: Optional[ApprovalPopup],
+    ) -> None:
         """
-        Consulta al LLM en segundo plano para preautorizar una solicitud.
+        Lanza la consulta al LLM para preautorizar una solicitud.
 
-        Muestra feedback inmediato en el panel ("Consultando al modelo...")
-        y lanza un hilo que:
-          - Envía un prompt aislado al LLM (separado del contexto del agente).
-          - Si el modelo responde afirmativamente, resuelve la aprobación
-            automáticamente y registra el evento en el historial.
-          - Si responde negativamente o la respuesta es ambigua, encola
-            la solicitud para que el usuario la resuelva manualmente.
-
-        Si ya hay otra solicitud visible en el panel, el preauth se ejecuta
-        en silencio (sin sobrescribir el panel) y el resultado se aplica
-        cuando termina: o bien se resuelve directamente, o bien se encola
-        para mostrarse cuando el usuario resuelva la solicitud actual.
+        Si se pasa un popup, se actualiza su indicador de estado mientras
+        dura la consulta y se deshabilitan sus botones. Si no hay popup
+        (caso de preauth silencioso porque ya hay otro popup visible),
+        simplemente se ejecuta en segundo plano.
         """
         request_id = event["request_id"]
         task_id = event["task_id"]
         tool_name = event["tool_name"]
 
-        # Si ya hay una solicitud visible en el panel, no lo sobrescribimos:
-        # ejecutamos el preauth en silencio y encolamos/resolvedemos al terminar.
+        # Si ya hay un popup visible, no lo sobrescribimos: ejecutamos el
+        # preauth en silencio y encolamos/resolvemos al terminar.
         panel_busy = len(self._approval_queue) > 0
 
-        if not panel_busy:
-            # Feedback inmediato en el panel.
-            self.approval_info_var.set(
-                f"🤖 Consultando al modelo sobre la seguridad de '{tool_name}'..."
-            )
-            # Indicador de estado de preautorización (timeout dedicado).
-            self.preauth_status_var.set(
+        if popup is not None:
+            popup.set_preauth_status(
                 f"🤖 Preautorizando {tool_name}… (timeout {CONFIG.preauth_timeout:.0f}s)"
             )
-            self.approval_args_view.configure(
-                background=CONFIG.ui_approval_request_bg,
-                foreground=CONFIG.ui_approval_request_fg,
-            )
-            self.approval_args_view.configure(state="normal")
-            self.approval_args_view.delete("1.0", "end")
-            self.approval_args_view.insert(
-                "end",
-                f"Tarea #{task_id}  ·  Herramienta: {tool_name}\n"
-                f"Esperando respuesta del modelo...",
-            )
-            self.approval_args_view.configure(state="disabled")
-            self.allow_btn.configure(state="disabled")
-            self.deny_btn.configure(state="disabled")
+            popup.disable_buttons()
 
         def _worker() -> None:
             try:
@@ -4560,21 +6311,16 @@ class Dashboard:
                             f"Motivo: {reason}"
                         ),
                     )
-                    if not panel_busy:
-                        self.approval_info_var.set(
-                            f"🤖 Preautorizado por LLM: '{tool_name}' — {reason}"
-                        )
-                        self.approval_args_view.configure(
-                            background=CONFIG.ui_approval_granted_bg,
-                            foreground=CONFIG.ui_approval_granted_fg,
-                        )
-                        self.approval_args_view.configure(state="normal")
-                        self.approval_args_view.delete("1.0", "end")
-                        self.approval_args_view.configure(state="disabled")
                     self._refresh_task_lists()
                     if task_id == self.selected_task_id:
                         self._select_task(task_id)
-                    self._update_approval_header()
+                    # Si había popup, cerrarlo (la solicitud queda resuelta).
+                    if popup is not None:
+                        popup._close()
+                        self._current_approval_popup = None
+                    # Si quedan solicitudes pendientes, mostrar la siguiente.
+                    if self._approval_queue:
+                        self._render_current_approval()
                 else:
                     # El LLM recomienda no autorizar (o no pudo decidir).
                     if CONFIG.preauth_fallback_to_human:
@@ -4590,8 +6336,6 @@ class Dashboard:
                         self._approval_queue.append(event)
                         if not panel_busy:
                             self._render_current_approval()
-                        else:
-                            self._update_approval_header()
                     else:
                         # Fallback deshabilitado: resolver automáticamente
                         # como denegado (modo "fail-closed" sin intervención
@@ -4609,26 +6353,16 @@ class Dashboard:
                                 f"deshabilitado: {reason}. Acción bloqueada."
                             ),
                         )
-                        if not panel_busy:
-                            self.approval_info_var.set(
-                                f"🤖 Denegado por LLM (sin fallback humano): "
-                                f"'{tool_name}' — {reason}"
-                            )
-                            self.approval_args_view.configure(
-                                background=CONFIG.ui_approval_denied_bg,
-                                foreground=CONFIG.ui_approval_denied_fg,
-                            )
-                            self.approval_args_view.configure(state="normal")
-                            self.approval_args_view.delete("1.0", "end")
-                            self.approval_args_view.configure(state="disabled")
                         self._refresh_task_lists()
                         if task_id == self.selected_task_id:
                             self._select_task(task_id)
-                        self._update_approval_header()
-
-                # Limpiar el indicador de estado de preautorización
-                # independientemente del resultado (aprobado/denegado).
-                self.preauth_status_var.set("")
+                        # Si había popup, cerrarlo.
+                        if popup is not None:
+                            popup._close()
+                            self._current_approval_popup = None
+                        # Si quedan solicitudes pendientes, mostrar la siguiente.
+                        if self._approval_queue:
+                            self._render_current_approval()
 
             try:
                 self.root.after(0, _apply_result)
@@ -4756,53 +6490,52 @@ class Dashboard:
         )
 
     def _render_current_approval(self) -> None:
-        """Renderiza en el panel la primera solicitud pendiente de la cola."""
-        if not self._approval_queue:
-            self.approval_info_var.set("Sin solicitudes pendientes.")
-            self.approval_args_view.configure(state="normal")
-            self.approval_args_view.delete("1.0", "end")
-            self.approval_args_view.configure(state="disabled")
-            self.allow_btn.configure(state="disabled")
-            self.deny_btn.configure(state="disabled")
-            self._update_approval_header()
-            return
-        event = self._approval_queue[0]
-        args = event.get("arguments", {}) or {}
-        args_str = _format_approval_args(event.get("tool_name", ""), args)
-        info = (
-            f"Tarea #{event['task_id']}  ·  Herramienta: {event['tool_name']}  "
-            f"·  Riesgo: {event['risk']}\n"
-            f"Descripción: {event.get('tool_description', '')}"
-        )
-        self.approval_info_var.set(info)
-        # Solicitud pendiente: fondo gris claro, texto negro.
-        self.approval_args_view.configure(
-            background=CONFIG.ui_approval_request_bg,
-            foreground=CONFIG.ui_approval_request_fg,
-        )
-        self.approval_args_view.configure(state="normal")
-        self.approval_args_view.delete("1.0", "end")
-        self.approval_args_view.insert("end", args_str)
-        self.approval_args_view.configure(state="disabled")
-        self.allow_btn.configure(state="normal")
-        self.deny_btn.configure(state="normal")
-        self._update_approval_header()
+        """
+        Muestra la primera solicitud pendiente de la cola como popup modal.
 
-    def _update_approval_header(self) -> None:
-        """Actualiza el encabezado del panel con el contador de pendientes."""
-        pending = len(self._approval_queue)
-        if pending == 0:
-            self.approval_header_var.set(
-                "⚠ Control de permisos (Human-in-the-Loop)"
+        Si ya hay un popup visible, no hace nada (la nueva solicitud ya
+        está encolada y se mostrará cuando el usuario resuelva la actual).
+        """
+        if not self._approval_queue:
+            return
+        # Si ya hay un popup visible, no crear otro (la cola ya está
+        # actualizada y se mostrará al cerrar el actual).
+        if self._current_approval_popup is not None:
+            try:
+                if self._current_approval_popup.winfo_exists():
+                    return
+            except Exception:  # noqa: BLE001
+                pass
+        event = self._approval_queue[0]
+        # Con la app minimizada solo se avisa en la bandeja; el popup se abre al restaurarla.
+        if _is_minimized(self.root):
+            _TrayNotifier.show(
+                self.root,
+                "Autorización requerida",
+                f"Tarea #{event.get('task_id', '?')}: {event.get('tool_name', '')}",
             )
-        elif pending == 1:
-            self.approval_header_var.set(
-                "⚠ Control de permisos (Human-in-the-Loop) — 1 solicitud pendiente"
-            )
-        else:
-            self.approval_header_var.set(
-                f"⚠ Control de permisos (Human-in-the-Loop) — {pending} solicitudes pendientes"
-            )
+            if getattr(self, "_approval_poll_id", None) is None:
+                self._approval_poll_id = self.root.after(300, self._poll_pending_approval)
+            return
+        popup = ApprovalPopup(self, event)
+        self._current_approval_popup = popup
+        popup.window.focus_force()
+
+    def _poll_pending_approval(self) -> None:
+        """Espera a que se restaure la ventana principal para mostrar la solicitud pendiente."""
+        self._approval_poll_id = None
+        if not self._approval_queue:
+            _TrayNotifier.remove()
+            return
+        if _is_minimized(self.root):
+            self._approval_poll_id = self.root.after(300, self._poll_pending_approval)
+            return
+        # Margen para que la geometría se estabilice antes de centrar el popup.
+        self._approval_poll_id = self.root.after(250, self._show_pending_after_restore)
+
+    def _show_pending_after_restore(self) -> None:
+        self._approval_poll_id = None
+        self._render_current_approval()
 
     # --- Explorador de ficheros del workspace ---
 
@@ -4936,7 +6669,37 @@ class Dashboard:
         viewer.minsize(500, 300)
         viewer.configure(background=CONFIG.ui_bg_color)
         viewer.transient(self.root)
-        viewer.grab_set()
+
+        # Barra de título personalizada (overrideredirect) coherente con
+        # la ventana principal. Solo se aplica si está habilitada en
+        # config.ini. Se crea ANTES del contenido para que se empaquete
+        # en la parte superior.
+        if getattr(CONFIG, "ui_custom_titlebar", True):
+            try:
+                viewer.overrideredirect(True)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                _force_taskbar_visibility(viewer)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                file_title_bar = CustomTitleBar(
+                    viewer,
+                    title=f"📄 {target.name}",
+                    icon="📄",
+                    bg=CONFIG.ui_titlebar_color,
+                    fg=CONFIG.ui_titlebar_text_color,
+                    hover_bg=CONFIG.ui_button_hover_bg,
+                    close_hover_bg=CONFIG.ui_button_danger_bg,
+                    height=CONFIG.ui_custom_titlebar_height,
+                    show_minimize=False,
+                    show_maximize=True,
+                    close_callback=viewer.destroy,
+                )
+                file_title_bar.pack(side="top", fill="x")
+            except Exception:  # noqa: BLE001
+                pass
 
         # Cabecera con la ruta completa y el tamaño.
         header = ttk.Frame(viewer, style="Card.TFrame", padding=8)
@@ -5055,6 +6818,16 @@ class Dashboard:
         # Cerrar con Escape.
         viewer.bind("<Escape>", lambda _e: viewer.destroy())
 
+        _bring_to_front(viewer)
+        try:
+            viewer.grab_set()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _open_settings(self) -> None:
+        """Abre el popup de edición de config.ini."""
+        SettingsDialog(self)
+
     def _on_browser_up(self) -> None:
         """Sube al directorio padre (sin salir del workspace)."""
         current = self._browser_current_dir
@@ -5072,6 +6845,349 @@ class Dashboard:
 
 
 # ============================================================================
+# POPUP DE AUTORIZACIÓN (HITL)
+# ============================================================================
+
+class ApprovalPopup:
+    """
+    Ventana emergente (Toplevel) para solicitudes de aprobación HITL.
+
+    Se muestra como popup flotante sobre el dashboard cuando el agente
+    necesita autorización humana para ejecutar una acción sensible. El
+    popup muestra:
+
+      - Cabecera con el nombre de la herramienta y el nivel de riesgo.
+      - Descripción de la herramienta.
+      - Argumentos completos que se van a ejecutar.
+      - Botones "✅ Permitir" y "❌ Cancelar".
+      - Casilla "🤖 Preautorizar" (consulta al LLM antes de mostrar).
+
+    El popup NO usa ``grab_set()`` para permitir que el usuario siga
+    interactuando con el dashboard (revisar historial, seleccionar otra
+    tarea) mientras decide. Solo se cierra cuando el usuario resuelve la
+    solicitud o cuando el LLM la preautoriza/deniega automáticamente.
+
+    Atajos de teclado:
+      - Enter: Permitir
+      - Escape: Cancelar
+    """
+
+    def __init__(self, dashboard: "Dashboard", event: Dict[str, Any]) -> None:
+        self.dashboard = dashboard
+        self.event = event
+        self._resolved = False  # evita doble-resolución si el usuario hace doble clic
+
+        self.window = Toplevel(dashboard.root)
+        self.window.title("⚠ Autorización requerida")
+        self.window.geometry("720x520")
+        self.window.minsize(520, 380)
+        try:
+            self.window.configure(background=CONFIG.ui_bg_color)
+        except Exception:  # noqa: BLE001
+            pass
+        # Sin transient: una ventana con propietario se oculta al minimizar
+        # el dashboard y queda detrás al restaurarlo. Se mantiene topmost
+        # hasta resolverla. NO usamos grab_set() para no bloquear el dashboard.
+        # Si el usuario cierra la ventana con la X, se trata como "Cancelar".
+        self.window.protocol("WM_DELETE_WINDOW", self._on_deny)
+
+        # Barra de título personalizada (overrideredirect) coherente con
+        # la ventana principal. Solo se aplica si está habilitada en
+        # config.ini. Se crea ANTES del layout para que el contenido
+        # se empaquete debajo de ella.
+        if getattr(CONFIG, "ui_custom_titlebar", True):
+            try:
+                self.window.overrideredirect(True)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                _force_taskbar_visibility(self.window)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                self.title_bar = CustomTitleBar(
+                    self.window,
+                    title="Autorización requerida",
+                    icon="⚠",
+                    bg=CONFIG.ui_titlebar_color,
+                    fg=CONFIG.ui_titlebar_text_color,
+                    hover_bg=CONFIG.ui_button_hover_bg,
+                    close_hover_bg=CONFIG.ui_button_danger_bg,
+                    height=CONFIG.ui_custom_titlebar_height,
+                    show_minimize=False,
+                    show_maximize=False,
+                    close_callback=self._on_deny,
+                )
+                self.title_bar.pack(side="top", fill="x")
+            except Exception:  # noqa: BLE001
+                pass
+
+        self._build_layout()
+        self._center_on_dashboard()
+
+        # Aplicar el mismo estilo de barra de título que el dashboard
+        # para mantener la coherencia visual (no-op si ya hay barra
+        # personalizada con overrideredirect).
+        try:
+            _apply_modern_titlebar(self.window)
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Atajos de teclado.
+        self.window.bind("<Escape>", lambda _e: self._on_deny())
+        self.window.bind("<Return>", lambda _e: self._on_allow())
+        _bring_to_front(self.window)
+        try:
+            self.window.attributes("-topmost", True)
+            # Si el dashboard se restaura, el popup vuelve al frente.
+            dashboard.root.bind("<Map>", self._on_dashboard_map, add="+")
+        except Exception:  # noqa: BLE001
+            pass
+        # Aviso en la bandeja del sistema y parpadeo en la barra de tareas.
+        _TrayNotifier.show(
+            dashboard.root,
+            "Autorización requerida",
+            f"Tarea #{event.get('task_id', '?')}: {event.get('tool_name', '')}",
+        )
+        # Sonido de aviso.
+        try:
+            dashboard.root.bell()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _on_dashboard_map(self, event: Any) -> None:
+        if event.widget is not self.dashboard.root or self._resolved:
+            return
+        try:
+            self.window.lift()
+            self.window.attributes("-topmost", True)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _build_layout(self) -> None:
+        """Construye los widgets del popup de autorización."""
+        # Marco principal con esquinas redondeadas.
+        outer = RoundedFrame(
+            self.window,
+            bg=CONFIG.ui_card_bg,
+            border_color=CONFIG.ui_card_border_color,
+            border_width=CONFIG.ui_card_border_width,
+            radius=CONFIG.ui_corner_radius,
+            padding=14,
+        )
+        outer.pack(fill="both", expand=True, padx=6, pady=6)
+
+        # --- Cabecera ---
+        header = ttk.Frame(outer.inner, style="Card.TFrame")
+        header.pack(fill="x")
+
+        # Icono + título de la herramienta.
+        tool_name = self.event.get("tool_name", "?")
+        risk = self.event.get("risk", "?")
+        task_id = self.event.get("task_id", "?")
+        title_text = f"⚠ Autorización requerida — Tarea #{task_id}"
+        ttk.Label(
+            header,
+            text=title_text,
+            style="Header.TLabel",
+        ).pack(side="left")
+
+        # Etiqueta de riesgo (a la derecha).
+        risk_colors = {
+            "CRITICAL": CONFIG.ui_button_danger_bg,
+            "HIGH": CONFIG.ui_button_danger_bg,
+            "MEDIUM": CONFIG.ui_status_awaiting_approval,
+            "LOW": CONFIG.ui_status_completed,
+        }
+        risk_fg = {
+            "CRITICAL": "#ffffff",
+            "HIGH": "#ffffff",
+            "MEDIUM": "#000000",
+            "LOW": "#ffffff",
+        }
+        risk_bg = risk_colors.get(str(risk).upper(), CONFIG.ui_status_awaiting_approval)
+        risk_fgc = risk_fg.get(str(risk).upper(), "#000000")
+        risk_label = TkLabel(
+            header,
+            text=f"  Riesgo: {risk}  ",
+            bg=risk_bg,
+            fg=risk_fgc,
+            font=(CONFIG.ui_font_family, CONFIG.ui_font_size, "bold"),
+            padx=8,
+            pady=2,
+        )
+        risk_label.pack(side="right")
+
+        # --- Información de la herramienta ---
+        info_frame = ttk.Frame(outer.inner, style="Card.TFrame")
+        info_frame.pack(fill="x", pady=(10, 6))
+
+        ttk.Label(
+            info_frame,
+            text=f"🔧 Herramienta: {tool_name}",
+            style="Card.TLabel",
+            font=(CONFIG.ui_font_family, CONFIG.ui_font_size + 1, "bold"),
+        ).pack(anchor="w")
+
+        tool_desc = self.event.get("tool_description", "")
+        if tool_desc:
+            desc_label = ttk.Label(
+                info_frame,
+                text=f"📄 {tool_desc}",
+                style="Card.TLabel",
+                wraplength=640,
+                justify="left",
+            )
+            desc_label.pack(anchor="w", pady=(2, 0))
+
+        # --- Argumentos (caja con esquinas redondeadas) ---
+        args_label = ttk.Label(
+            outer.inner,
+            text="📋 Argumentos que se van a ejecutar:",
+            style="Card.TLabel",
+        )
+        args_label.pack(anchor="w", pady=(8, 4))
+
+        args_card = RoundedFrame(
+            outer.inner,
+            bg=CONFIG.ui_approval_bg,
+            border_color=CONFIG.ui_card_border_color,
+            border_width=CONFIG.ui_card_border_width,
+            radius=max(0, CONFIG.ui_corner_radius - 2),
+            padding=2,
+        )
+        args_card.pack(fill="both", expand=True, pady=(0, 8))
+
+        args_str = _format_approval_args(tool_name, self.event.get("arguments", {}) or {})
+        self.args_view = ScrolledText(
+            args_card.inner,
+            height=8,
+            wrap="word",
+            font=(CONFIG.ui_mono_font_family, CONFIG.ui_mono_font_size - 1),
+            state="disabled",
+            background=CONFIG.ui_approval_bg,
+            foreground=CONFIG.ui_approval_fg,
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=0,
+            padx=6,
+            pady=4,
+        )
+        _use_ttk_scrollbar(self.args_view)
+        self.args_view.pack(fill="both", expand=True)
+        self.args_view.configure(state="normal")
+        self.args_view.insert("end", args_str)
+        self.args_view.configure(state="disabled")
+
+        # --- Indicador de preautorización (oculto por defecto) ---
+        self.preauth_status_var = StringVar(value="")
+        ttk.Label(
+            outer.inner,
+            textvariable=self.preauth_status_var,
+            style="Card.TLabel",
+            foreground=CONFIG.ui_info_fg,
+        ).pack(anchor="w", pady=(0, 4))
+
+        # --- Botones de acción ---
+        btn_row = ttk.Frame(outer.inner, style="Card.TFrame")
+        btn_row.pack(fill="x")
+
+        # Botón "Permitir" en verde.
+        self.allow_btn = RoundedButton(
+            btn_row,
+            text="✅ Permitir  (Enter)",
+            command=self._on_allow,
+            bg=CONFIG.ui_status_completed,
+            fg="#ffffff",
+            hover_bg=CONFIG.ui_button_hover_bg,
+            pressed_bg=CONFIG.ui_button_pressed_bg,
+            radius=CONFIG.ui_corner_radius,
+            font=(CONFIG.ui_font_family, CONFIG.ui_font_size, "bold"),
+            padding_x=16,
+            padding_y=8,
+        )
+        self.allow_btn.pack(side="left")
+
+        # Botón "Cancelar" en rojo.
+        self.deny_btn = RoundedButton(
+            btn_row,
+            text="❌ Cancelar  (Esc)",
+            command=self._on_deny,
+            bg=CONFIG.ui_button_danger_bg,
+            fg=CONFIG.ui_button_danger_fg,
+            hover_bg=CONFIG.ui_button_danger_hover_bg,
+            pressed_bg=CONFIG.ui_button_danger_pressed_bg,
+            radius=CONFIG.ui_corner_radius,
+            font=(CONFIG.ui_font_family, CONFIG.ui_font_size, "bold"),
+            padding_x=16,
+            padding_y=8,
+        )
+        self.deny_btn.pack(side="left", padx=(8, 0))
+
+        # Foco inicial en el botón Permitir.
+        self.allow_btn.focus_set()
+
+    def _center_on_dashboard(self) -> None:
+        """Centra el popup sobre la ventana del dashboard."""
+        self.window.update_idletasks()
+        try:
+            root_x = self.dashboard.root.winfo_rootx()
+            root_y = self.dashboard.root.winfo_rooty()
+            root_w = self.dashboard.root.winfo_width()
+            root_h = self.dashboard.root.winfo_height()
+            pw = self.window.winfo_width()
+            ph = self.window.winfo_height()
+            x = root_x + (root_w - pw) // 2
+            y = root_y + (root_h - ph) // 2
+            self.window.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _on_allow(self) -> None:
+        """Resuelve la solicitud como aprobada y cierra el popup."""
+        if self._resolved:
+            return
+        self._resolved = True
+        try:
+            self.dashboard._resolve_specific_approval(self.event, granted=True)
+        finally:
+            self._close()
+
+    def _on_deny(self) -> None:
+        """Resuelve la solicitud como denegada y cierra el popup."""
+        if self._resolved:
+            return
+        self._resolved = True
+        try:
+            self.dashboard._resolve_specific_approval(self.event, granted=False)
+        finally:
+            self._close()
+
+    def _close(self) -> None:
+        """Cierra la ventana del popup."""
+        _TrayNotifier.remove()
+        try:
+            self.window.destroy()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def set_preauth_status(self, text: str) -> None:
+        """Actualiza el indicador de estado de preautorización."""
+        try:
+            self.preauth_status_var.set(text)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def disable_buttons(self) -> None:
+        """Deshabilita los botones mientras se preautoriza."""
+        try:
+            self.allow_btn.configure(state="disabled")
+            self.deny_btn.configure(state="disabled")
+        except Exception:  # noqa: BLE001
+            pass
+
+
+# ============================================================================
 # POPUP DE BIENVENIDA
 # ============================================================================
 
@@ -5085,11 +7201,10 @@ class WelcomeDialog:
     "No mostrar de nuevo" para que no vuelva a aparecer en futuros arranques.
     """
 
-    PROJECT_NAME = "Hercules"
     DEVELOPER_NAME = "Rubén Pastor"
-    GITHUB_URL = "https://github.com/bondwell79/agentes"
-    GITHUB_DISPLAY = "github.com/bondwell79/agentes"
-    Version = "Alpha 0.1.0"
+    GITHUB_URL = "https://github.com/bondwell79/hercules"
+    GITHUB_DISPLAY = "github.com/bondwell79/hercules"
+    VERSION_PN = "1.0"
 
     ASCII_ART = r"""
 ██╗  ██╗███████╗██████╗  ██████╗██╗   ██╗██╗     ███████╗███████╗
@@ -5105,7 +7220,7 @@ class WelcomeDialog:
         self.dont_show_again = BooleanVar(value=False)
 
         self.window = Toplevel(parent)
-        self.window.title(f"Bienvenido")
+        self.window.title(f"Bienvenido a Hercules {self.VERSION_PN}")
         self.window.resizable(False, False)
         # Colores coherentes con el dashboard.
         try:
@@ -5113,20 +7228,58 @@ class WelcomeDialog:
         except Exception:  # noqa: BLE001
             pass
 
-        # Hacer la ventana modal y centrarla sobre la principal.
+        # Modal: el grab se aplica al final, cuando la ventana ya es visible.
         self.window.transient(parent)
-        self.window.grab_set()
         self.window.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # Barra de título personalizada (overrideredirect) coherente con
+        # la ventana principal. Solo se aplica si está habilitada en
+        # config.ini. Se crea ANTES del layout para que el contenido
+        # se empaquete debajo de ella.
+        if getattr(CONFIG, "ui_custom_titlebar", True):
+            try:
+                self.window.overrideredirect(True)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                _force_taskbar_visibility(self.window)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                self.title_bar = CustomTitleBar(
+                    self.window,
+                    title=f"Bienvenido a Hercules {self.VERSION_PN}",
+                    icon="👋",
+                    bg=CONFIG.ui_titlebar_color,
+                    fg=CONFIG.ui_titlebar_text_color,
+                    hover_bg=CONFIG.ui_button_hover_bg,
+                    close_hover_bg=CONFIG.ui_button_danger_bg,
+                    height=CONFIG.ui_custom_titlebar_height,
+                    show_minimize=False,
+                    show_maximize=False,
+                    close_callback=self._on_close,
+                )
+                self.title_bar.pack(side="top", fill="x")
+            except Exception:  # noqa: BLE001
+                pass
 
         self._build_layout()
 
+        # Aplicar el mismo estilo de barra de título que el dashboard
+        # para mantener la coherencia visual (no-op si ya hay barra
+        # personalizada con overrideredirect).
+        try:
+            _apply_modern_titlebar(self.window)
+        except Exception:  # noqa: BLE001
+            pass
+
         # Centrar la ventana en la pantalla una vez construida.
-        self.window.update_idletasks()
+        self.window.update()
         try:
             sw = self.window.winfo_screenwidth()
             sh = self.window.winfo_screenheight()
-            ww = self.window.winfo_reqwidth()
-            wh = self.window.winfo_reqheight()
+            ww = self.window.winfo_width()
+            wh = self.window.winfo_height()
             x = max(0, (sw) // 2-(ww) // 2)
             y = max(0, (sh) // 2-(wh) // 2)
             self.window.geometry(f"+{x}+{y}")
@@ -5137,30 +7290,54 @@ class WelcomeDialog:
         self.window.bind("<Return>", lambda _e: self._on_close())
         self.window.bind("<Escape>", lambda _e: self._on_close())
 
+        # Una ventana overrideredirect no recibe foco ni z-order del WM:
+        # hay que subirla explícitamente o queda tras el dashboard.
+        _bring_to_front(self.window)
+        try:
+            self.window.grab_set()
+        except Exception:  # noqa: BLE001
+            pass
+
     def _build_layout(self) -> None:
         """Construye los widgets del popup de bienvenida."""
         # Marco principal con padding.
         try:
             frame_bg = CONFIG.ui_card_bg
-            fg_color = CONFIG.ui_fg_color
             mono_family = CONFIG.mono_font_family
             mono_size = CONFIG.mono_font_size
             font_family = CONFIG.ui_font_family
             font_size = CONFIG.ui_font_size
+            accent_bg = CONFIG.ui_button_accent_bg
+            accent_fg = CONFIG.ui_button_accent_fg
+            accent_hover = CONFIG.ui_button_accent_hover_bg
+            accent_pressed = CONFIG.ui_button_accent_pressed_bg
+            radius = CONFIG.ui_corner_radius
         except Exception:  # noqa: BLE001
             frame_bg = "#2d2d30"
-            fg_color = "#e0e0e0"
             mono_family = "Consolas"
             mono_size = 10
             font_family = "Segoe UI"
             font_size = 10
+            accent_bg = "#007acc"
+            accent_fg = "#ffffff"
+            accent_hover = "#1a8ad8"
+            accent_pressed = "#005a9e"
+            radius = 10
 
-        outer = ttk.Frame(self.window, style="Card.TFrame", padding=24)
-        outer.pack(fill="both", expand=True)
+        # Marco principal con esquinas redondeadas.
+        outer = RoundedFrame(
+            self.window,
+            bg=frame_bg,
+            border_color=CONFIG.ui_card_border_color,
+            border_width=CONFIG.ui_card_border_width,
+            radius=radius,
+            padding=24,
+        )
+        outer.pack(fill="both", expand=True, padx=4, pady=4)
 
         # Arte ASCII del nombre del proyecto.
         ascii_label = Text(
-            outer,
+            outer.inner,
             height=len(self.ASCII_ART.strip("\n").splitlines())+1,
             width=max(len(line) for line in self.ASCII_ART.splitlines()),
             font=(mono_family, mono_size + 4, "bold"),
@@ -5178,7 +7355,7 @@ class WelcomeDialog:
 
         # Nombre del desarrollador.
         dev_label = ttk.Label(
-            outer,
+            outer.inner,
             text=f"Desarrollado por {self.DEVELOPER_NAME}",
             style="Card.TLabel",
             font=(font_family, font_size + 1),
@@ -5186,7 +7363,7 @@ class WelcomeDialog:
         dev_label.pack(pady=(0, 4))
 
         # Enlace al repositorio de GitHub (Label con cursor de mano).
-        link_frame = ttk.Frame(outer, style="Card.TFrame")
+        link_frame = ttk.Frame(outer.inner, style="Card.TFrame")
         link_frame.pack(pady=(0, 16))
 
         link_prefix = ttk.Label(
@@ -5211,29 +7388,30 @@ class WelcomeDialog:
         self._link_label.bind("<Leave>", self._on_link_leave)
 
         # Separador visual.
-        ttk.Separator(outer, orient="horizontal").pack(fill="x", pady=(0, 12))
+        ttk.Separator(outer.inner, orient="horizontal").pack(fill="x", pady=(0, 12))
 
         # Casilla "No mostrar de nuevo".
         dont_show = ttk.Checkbutton(
-            outer,
+            outer.inner,
             text="No mostrar este mensaje al iniciar",
             variable=self.dont_show_again,
             style="Card.TCheckbutton",
         )
         dont_show.pack(anchor="w", pady=(0, 12))
 
-        # Botón "Comenzar".
-        try:
-            style_name = "Accent.TButton"
-            self.window.tk.call("ttk::style", "configure", style_name, "-foreground", fg_color)
-        except Exception:  # noqa: BLE001
-            style_name = "TButton"
-
-        button = ttk.Button(
-            outer,
+        # Botón "Comenzar" con esquinas redondeadas y color de acento.
+        button = RoundedButton(
+            outer.inner,
             text="Comenzar",
             command=self._on_close,
-            style=style_name,
+            bg=accent_bg,
+            fg=accent_fg,
+            hover_bg=accent_hover,
+            pressed_bg=accent_pressed,
+            radius=radius,
+            font=(font_family, font_size + 1, "bold"),
+            padding_x=20,
+            padding_y=8,
         )
         button.pack(fill="x")
         button.focus_set()
@@ -5298,6 +7476,346 @@ def _save_welcome_pref(show: bool) -> None:
     pref_path = SCRIPT_DIR / ".welcome"
     pref_path.parent.mkdir(parents=True, exist_ok=True)
     pref_path.write_text("true" if show else "false", encoding="utf-8")
+
+
+# ============================================================================
+# AJUSTES (edición de config.ini)
+# ============================================================================
+
+_CONFIG_SECTION_RE = re.compile(r"^\s*\[(?P<name>[^\]]+)\]")
+_CONFIG_KEY_RE = re.compile(r"^(?P<key>[^\s;#=\[][^=]*?)\s*=\s*(?P<value>.*)$")
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _scan_config_file(path: str) -> Dict[str, List[Tuple[str, str]]]:
+    """Devuelve, por sección, las claves del fichero en orden con su comentario descriptivo."""
+    result: Dict[str, List[Tuple[str, str]]] = {}
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return result
+    section: Optional[str] = None
+    pending: List[str] = []
+    after_blank = False
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            after_blank = True
+            continue
+        m = _CONFIG_SECTION_RE.match(line)
+        if m:
+            section = m.group("name").strip()
+            result.setdefault(section, [])
+            pending, after_blank = [], False
+            continue
+        if line[0] in ";#":
+            # Un bloque de comentarios nuevo tras una línea en blanco sustituye al anterior.
+            if after_blank:
+                pending, after_blank = [], False
+            body = line.lstrip(";#").strip()
+            if body and not set(body) <= set("-="):
+                pending.append(body)
+            continue
+        m = _CONFIG_KEY_RE.match(line)
+        if m and section is not None:
+            result[section].append((m.group("key").strip().lower(), " ".join(pending)))
+        pending, after_blank = [], False
+    return result
+
+
+def _update_config_file(path: str, updates: Dict[str, Dict[str, str]]) -> None:
+    """
+    Actualiza valores de config.ini conservando comentarios y orden.
+
+    Las claves inexistentes se añaden al final de su sección.
+    """
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines(keepends=True)
+    except FileNotFoundError:
+        lines = []
+    remaining = {sec: dict(kv) for sec, kv in updates.items() if kv}
+    out: List[str] = []
+
+    def flush(sec: Optional[str]) -> None:
+        missing = remaining.get(sec or "")
+        if not missing:
+            return
+        idx = len(out)
+        while idx > 0 and not out[idx - 1].strip():
+            idx -= 1
+        if idx > 0 and not out[idx - 1].endswith("\n"):
+            out[idx - 1] += "\n"
+        out[idx:idx] = [f"{k} = {v}\n" for k, v in missing.items()]
+        remaining[sec or ""] = {}
+
+    section: Optional[str] = None
+    for line in lines:
+        body = line.rstrip("\r\n")
+        newline = line[len(body):]
+        m = _CONFIG_SECTION_RE.match(body)
+        if m:
+            flush(section)
+            section = m.group("name").strip()
+            out.append(line)
+            continue
+        stripped = body.strip()
+        if section is not None and stripped and stripped[0] not in ";#":
+            km = _CONFIG_KEY_RE.match(stripped)
+            if km:
+                key = km.group("key").strip()
+                sec_updates = remaining.get(section, {})
+                if key.lower() in sec_updates:
+                    out.append(f"{key} = {sec_updates.pop(key.lower())}{newline or chr(10)}")
+                    continue
+        out.append(line)
+    flush(section)
+    for sec, kv in remaining.items():
+        if kv:
+            if out and out[-1].strip():
+                out.append("\n")
+            out.append(f"[{sec}]\n")
+            out.extend(f"{k} = {v}\n" for k, v in kv.items())
+
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "w", encoding="utf-8", newline="") as fh:
+        fh.write("".join(out))
+    os.replace(tmp_path, path)
+
+
+class SettingsDialog:
+    """
+    Popup modal para editar config.ini desde la interfaz.
+
+    Muestra una pestaña por sección con un campo por clave y su comentario
+    del fichero como ayuda. Al guardar solo se reescriben las claves
+    modificadas (se conservan comentarios y orden). Los cambios se aplican
+    al reiniciar la aplicación.
+    """
+
+    SECTION_TITLES = {
+        "LLM": "\U0001f9e0 LLM",
+        "Workspace": "\U0001f4c1 Workspace",
+        "Database": "\U0001f5c4 Base de datos",
+        "Agent": "\U0001f916 Agente",
+        "UI": "\U0001f3a8 Interfaz",
+    }
+    CHOICES = {
+        ("LLM", "mode"): ("local", "http"),
+        ("UI", "titlebar_style"): ("system", "dark", "accent", "custom"),
+    }
+
+    def __init__(self, dashboard: "Dashboard") -> None:
+        self.dashboard = dashboard
+        root = dashboard.root
+        self._vars: Dict[Tuple[str, str], StringVar] = {}
+        self._initial: Dict[Tuple[str, str], str] = {}
+
+        self.window = Toplevel(root)
+        self.window.title("Ajustes")
+        self.window.geometry("820x680")
+        self.window.minsize(600, 400)
+        self.window.configure(background=CONFIG.ui_bg_color)
+        self.window.transient(root)
+
+        if CONFIG.ui_custom_titlebar:
+            try:
+                self.window.overrideredirect(True)
+                _force_taskbar_visibility(self.window)
+                CustomTitleBar(
+                    self.window,
+                    title="Ajustes",
+                    icon="\u2699",
+                    bg=CONFIG.ui_titlebar_color,
+                    fg=CONFIG.ui_titlebar_text_color,
+                    hover_bg=CONFIG.ui_button_hover_bg,
+                    close_hover_bg=CONFIG.ui_button_danger_bg,
+                    height=CONFIG.ui_custom_titlebar_height,
+                    show_minimize=False,
+                    show_maximize=False,
+                    close_callback=self._close,
+                ).pack(side="top", fill="x")
+            except Exception:  # noqa: BLE001
+                pass
+
+        # El pie se empaqueta antes que las pestañas para que siempre quede visible.
+        footer = ttk.Frame(self.window, style="TFrame", padding=10)
+        footer.pack(side="bottom", fill="x")
+        ttk.Label(
+            footer,
+            text="Los cambios se guardan en config.ini y se aplican al reiniciar Hercules.",
+            style="TLabel",
+        ).pack(side="left")
+        RoundedButton(
+            footer, text="Guardar", command=self._save,
+            bg=CONFIG.ui_button_accent_bg, fg=CONFIG.ui_button_accent_fg,
+            hover_bg=CONFIG.ui_button_accent_hover_bg,
+            pressed_bg=CONFIG.ui_button_accent_pressed_bg,
+            radius=CONFIG.ui_corner_radius, padding_x=16, padding_y=6,
+        ).pack(side="right")
+        RoundedButton(
+            footer, text="Cancelar", command=self._close,
+            bg=CONFIG.ui_button_bg, fg=CONFIG.ui_button_fg,
+            hover_bg=CONFIG.ui_button_hover_bg,
+            pressed_bg=CONFIG.ui_button_pressed_bg,
+            radius=CONFIG.ui_corner_radius, padding_x=16, padding_y=6,
+        ).pack(side="right", padx=(0, 8))
+
+        notebook = ttk.Notebook(self.window)
+        notebook.pack(side="top", fill="both", expand=True, padx=10, pady=(10, 0))
+        self._build_tabs(notebook)
+
+        self.window.bind("<Escape>", lambda _e: self._close())
+        self.window.bind("<Control-s>", lambda _e: self._save())
+
+        self.window.update_idletasks()
+        try:
+            x = root.winfo_rootx() + (root.winfo_width() - self.window.winfo_width()) // 2
+            y = root.winfo_rooty() + (root.winfo_height() - self.window.winfo_height()) // 2
+            self.window.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        except Exception:  # noqa: BLE001
+            pass
+        _bring_to_front(self.window)
+        try:
+            self.window.grab_set()
+        except Exception:  # noqa: BLE001
+            pass
+
+    # --- Construcción ---
+
+    def _build_tabs(self, notebook: ttk.Notebook) -> None:
+        parser = CONFIG._parser
+        scanned = _scan_config_file(CONFIG.path)
+        sections = [s for s in self.SECTION_TITLES if parser.has_section(s)]
+        sections += [s for s in parser.sections() if s not in sections]
+        for sec in sections:
+            described: Dict[str, str] = {}
+            for key, desc in scanned.get(sec, []):
+                described.setdefault(key, desc)
+            keys = list(described) + [k for k in parser.options(sec) if k not in described]
+
+            tab = ttk.Frame(notebook, style="Card.TFrame", padding=4)
+            notebook.add(tab, text=self.SECTION_TITLES.get(sec, sec))
+            inner = self.dashboard._make_scrollable_frame(tab)
+            inner.columnconfigure(1, weight=1)
+            for i, key in enumerate(keys):
+                self._add_row(inner, i, sec, key, described.get(key, ""))
+
+    def _add_row(self, parent: ttk.Frame, index: int, sec: str, key: str, desc: str) -> None:
+        value = CONFIG._parser.get(sec, key, raw=True)
+        var = StringVar(value=value)
+        self._vars[(sec, key)] = var
+        self._initial[(sec, key)] = value
+        row = index * 2
+
+        ttk.Label(parent, text=key, style="Card.TLabel").grid(
+            row=row, column=0, sticky="w", padx=(8, 12), pady=(10, 0)
+        )
+        default = Config.DEFAULTS.get(sec, {}).get(key, "")
+        choices = self.CHOICES.get((sec, key))
+        if choices is None and (default.lower() in ("true", "false") or value.lower() in ("true", "false")):
+            choices = ("true", "false")
+
+        if choices:
+            ttk.Combobox(
+                parent, textvariable=var, values=choices, state="readonly"
+            ).grid(row=row, column=1, sticky="ew", padx=(0, 8), pady=(10, 0))
+        else:
+            ttk.Entry(
+                parent, textvariable=var, show="\u2022" if key == "api_key" else ""
+            ).grid(row=row, column=1, sticky="ew", padx=(0, 8), pady=(10, 0))
+            if _HEX_COLOR_RE.match(value) or _HEX_COLOR_RE.match(default):
+                self._add_swatch(parent, row, var)
+
+        if desc:
+            ttk.Label(
+                parent, text=desc, style="Muted.TLabel", wraplength=640, justify="left"
+            ).grid(row=row + 1, column=0, columnspan=3, sticky="w", padx=8, pady=(2, 0))
+
+    def _add_swatch(self, parent: ttk.Frame, row: int, var: StringVar) -> None:
+        swatch = TkLabel(
+            parent, width=4, cursor="hand2", relief="flat", borderwidth=0,
+            highlightthickness=1, highlightbackground=CONFIG.ui_card_border_color,
+        )
+        swatch.grid(row=row, column=2, padx=(0, 8), pady=(10, 0), sticky="ns")
+
+        def refresh(*_a: Any) -> None:
+            try:
+                self.window.winfo_rgb(var.get())
+                swatch.configure(bg=var.get())
+            except Exception:  # noqa: BLE001
+                pass
+
+        def pick(_e: Any) -> None:
+            chosen = colorchooser.askcolor(color=var.get(), parent=self.window)[1]
+            if chosen:
+                var.set(chosen)
+
+        var.trace_add("write", refresh)
+        swatch.bind("<Button-1>", pick)
+        refresh()
+
+    # --- Acciones ---
+
+    def _validate(self, sec: str, key: str, value: str) -> Optional[str]:
+        """Devuelve un mensaje de error o None si el valor es válido."""
+        if "%" in value:
+            return "no puede contener '%'"
+        default = Config.DEFAULTS.get(sec, {}).get(key)
+        if default is None:
+            return None
+        try:
+            if re.fullmatch(r"-?\d+", default):
+                int(value)
+            elif re.fullmatch(r"-?\d+\.\d+", default):
+                float(value)
+            elif default.lower() in ("true", "false"):
+                if value.lower() not in ("true", "false"):
+                    return "debe ser true o false"
+            elif _HEX_COLOR_RE.match(default):
+                if not (key.startswith("titlebar") and value.lower() == "system"):
+                    self.window.winfo_rgb(value)
+        except ValueError:
+            return "debe ser un número" if not _HEX_COLOR_RE.match(default) else "color no válido"
+        except Exception:  # noqa: BLE001
+            return "color no válido (use nombre CSS o #RRGGBB)"
+        return None
+
+    def _save(self) -> None:
+        updates: Dict[str, Dict[str, str]] = {}
+        for (sec, key), var in self._vars.items():
+            value = var.get().strip()
+            if value == self._initial[(sec, key)]:
+                continue
+            error = self._validate(sec, key, value)
+            if error:
+                messagebox.showerror(
+                    "Valor no válido", f"[{sec}] {key}: {error}", parent=self.window
+                )
+                return
+            updates.setdefault(sec, {})[key] = value
+        if not updates:
+            self._close()
+            return
+        try:
+            _update_config_file(CONFIG.path, updates)
+        except OSError as exc:
+            messagebox.showerror(
+                "Error al guardar", f"No se pudo escribir {CONFIG.path}:\n{exc}", parent=self.window
+            )
+            return
+        messagebox.showinfo(
+            "Ajustes guardados",
+            "Reinicia Hercules para aplicar los cambios.",
+            parent=self.window,
+        )
+        self._close()
+
+    def _close(self) -> None:
+        try:
+            self.window.grab_release()
+        except Exception:  # noqa: BLE001
+            pass
+        self.window.destroy()
 
 
 # ============================================================================

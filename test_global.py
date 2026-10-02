@@ -6,9 +6,14 @@ Ejecuta todas las suites de tests del proyecto y muestra un resumen
 global con el resultado de cada una.
 
 Suites ejecutadas (en este orden):
-    1. test_resilience.py     — resiliencia ante respuestas malformadas del LLM.
-    2. test_funcionamiento.py — tareas simultáneas e historiales independientes.
-    3. test_subtareas.py      — orquestador de subtareas y rectificación.
+    1. test_resilience.py        — resiliencia ante respuestas malformadas del LLM.
+    2. test_funcionamiento.py    — tareas simultáneas e historiales independientes.
+    3. test_subtareas.py         — orquestador de subtareas y rectificación.
+    4. test_ui_imports.py        — importación de widgets UI y opciones de config.
+    5. test_ui_widgets.py        — instanciación y render de widgets UI.
+    6. test_ui_layout.py         — layout del dashboard con contenido realista.
+    7. test_modern_titlebar.py   — helper de barra de título moderna (DWM).
+    8. test_welcome_dialog.py    — diálogo de bienvenida.
 
 Cada suite se lanza como subproceso independiente para mantener el
 aislamiento entre ellas (cada una crea y destruye su propio entorno
@@ -45,9 +50,14 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 # Suites a ejecutar, en el orden deseado.
 # (ruta_al_script, nombre_legible)
 SUITES: List[tuple] = [
-    (SCRIPT_DIR / "test_resilience.py",     "test_resilience"),
-    (SCRIPT_DIR / "test_funcionamiento.py", "test_funcionamiento"),
-    (SCRIPT_DIR / "test_subtareas.py",      "test_subtareas"),
+    (SCRIPT_DIR / "test_resilience.py",      "test_resilience"),
+    (SCRIPT_DIR / "test_funcionamiento.py",  "test_funcionamiento"),
+    (SCRIPT_DIR / "test_subtareas.py",       "test_subtareas"),
+    (SCRIPT_DIR / "test_ui_imports.py",      "test_ui_imports"),
+    (SCRIPT_DIR / "test_ui_widgets.py",      "test_ui_widgets"),
+    (SCRIPT_DIR / "test_ui_layout.py",       "test_ui_layout"),
+    (SCRIPT_DIR / "test_modern_titlebar.py", "test_modern_titlebar"),
+    (SCRIPT_DIR / "test_welcome_dialog.py",  "test_welcome_dialog"),
 ]
 
 
@@ -177,6 +187,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
+
+    # Evita UnicodeEncodeError con ✓/✗ cuando stdout usa cp1252 (Windows).
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
 
     print("=" * 70)
     print("  TEST GLOBAL — hercules")

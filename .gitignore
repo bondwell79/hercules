@@ -2,6 +2,7 @@
 /venv
 /env
 /binarios
+/binarios_nvidia
 /hercules.build
 /llamacpp_win
 /hercules.db
