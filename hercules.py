@@ -4458,6 +4458,12 @@ class CustomTitleBar:
         self._drag_data: Dict[str, int] = {"x": 0, "y": 0}
         self._is_maximized = False
         self._pre_maximize_geometry: Optional[str] = None
+        self._resize_border = 7
+        self._resize_direction: Optional[str] = None
+        self._resize_start: Optional[Tuple[int, int, int, int, int, int]] = None
+        self._resize_cursor_widget: Optional[Any] = None
+        self._resize_cursor_original = ""
+        self._resize_bindings: List[Tuple[str, str]] = []
 
         # Frame principal de la barra de título.
         self.frame = Frame(
@@ -4503,6 +4509,7 @@ class CustomTitleBar:
             highlightthickness=0,
             borderwidth=0,
         )
+        self._controls_frame = right
         right.pack(side="right", fill="y")
 
         if self._settings_callback is not None:
@@ -4537,6 +4544,20 @@ class CustomTitleBar:
             w.bind("<Button-1>", self._on_drag_start)
             w.bind("<B1-Motion>", self._on_drag_motion)
             w.bind("<Double-Button-1>", self._on_double_click)
+
+        # Bindings globales para detectar los bordes también sobre los
+        # widgets hijos. La ventana sigue usando overrideredirect y conserva
+        # la barra personalizada; solo se ajustan sus dimensiones y posición.
+        for sequence, callback in (
+            ("<Motion>", self._on_resize_hover),
+            ("<Button-1>", self._on_resize_start),
+            ("<B1-Motion>", self._on_resize_drag),
+            ("<ButtonRelease-1>", self._on_resize_end),
+        ):
+            binding_id = self.parent.bind_all(sequence, callback, add="+")
+            if binding_id:
+                self._resize_bindings.append((sequence, binding_id))
+        self.parent.bind("<Destroy>", self._on_resize_destroy, add="+")
 
     def _create_title_button(
         self,
@@ -4639,6 +4660,8 @@ class CustomTitleBar:
 
     def _on_drag_motion(self, event: Any) -> None:
         """Mueve la ventana siguiendo el cursor."""
+        if self._resize_direction is not None:
+            return
         # Si está maximizada, restaurar al tamaño previo antes de mover.
         if self._is_maximized:
             # Restaurar a un tamaño razonable proporcional a la posición.
@@ -4668,6 +4691,144 @@ class CustomTitleBar:
             self._drag_data["y"] = event.y_root
         except Exception:
             pass
+
+    def _window_edges(self, x_root: int, y_root: int) -> str:
+        """Devuelve los bordes/corner bajo el puntero, si son redimensionables."""
+        if self._is_maximized:
+            return ""
+        try:
+            if self.parent.state() == "zoomed":
+                return ""
+            left = self.parent.winfo_rootx()
+            top = self.parent.winfo_rooty()
+            right = left + self.parent.winfo_width()
+            bottom = top + self.parent.winfo_height()
+            border = self._resize_border
+            if not (left <= x_root < right and top <= y_root < bottom):
+                return ""
+            horizontal = "w" if x_root < left + border else (
+                "e" if x_root >= right - border else ""
+            )
+            vertical = "n" if y_root < top + border else (
+                "s" if y_root >= bottom - border else ""
+            )
+            return vertical + horizontal
+        except Exception:
+            return ""
+
+    def _is_in_title_controls(self, widget: Any) -> bool:
+        """Evita interceptar los clics de minimizar/maximizar/cerrar."""
+        current = widget
+        while current is not None:
+            if current is self._controls_frame:
+                return True
+            current = getattr(current, "master", None)
+        return False
+
+    def _set_resize_cursor(self, widget: Any, direction: str) -> None:
+        cursors = {
+            "n": "size_ns", "s": "size_ns", "e": "size_we", "w": "size_we",
+            "ne": "size_ne_sw", "sw": "size_ne_sw",
+            "nw": "size_nw_se", "se": "size_nw_se",
+        }
+        if widget is self._resize_cursor_widget:
+            return
+        self._restore_resize_cursor()
+        try:
+            self._resize_cursor_original = widget.cget("cursor")
+            widget.configure(cursor=cursors[direction])
+            self._resize_cursor_widget = widget
+        except Exception:
+            self._resize_cursor_widget = None
+
+    def _restore_resize_cursor(self) -> None:
+        if self._resize_cursor_widget is not None:
+            try:
+                self._resize_cursor_widget.configure(cursor=self._resize_cursor_original)
+            except Exception:
+                pass
+            self._resize_cursor_widget = None
+
+    def _on_resize_hover(self, event: Any) -> None:
+        if not self._belongs_to_window(event.widget):
+            self._restore_resize_cursor()
+            return
+        direction = self._window_edges(event.x_root, event.y_root)
+        if direction and not self._is_in_title_controls(event.widget):
+            self._set_resize_cursor(event.widget, direction)
+        else:
+            self._restore_resize_cursor()
+
+    def _belongs_to_window(self, widget: Any) -> bool:
+        current = widget
+        while current is not None:
+            if current is self.parent:
+                return True
+            current = getattr(current, "master", None)
+        return False
+
+    def _on_resize_start(self, event: Any) -> None:
+        if not self._belongs_to_window(event.widget) or self._is_in_title_controls(event.widget):
+            return
+        direction = self._window_edges(event.x_root, event.y_root)
+        if not direction:
+            return
+        try:
+            self.parent.update_idletasks()
+            self._resize_direction = direction
+            self._resize_start = (
+                event.x_root, event.y_root,
+                self.parent.winfo_x(), self.parent.winfo_y(),
+                self.parent.winfo_width(), self.parent.winfo_height(),
+            )
+        except Exception:
+            self._resize_direction = None
+            self._resize_start = None
+
+    def _on_resize_drag(self, event: Any) -> None:
+        if self._resize_direction is None or self._resize_start is None:
+            return
+        start_x, start_y, x, y, width, height = self._resize_start
+        dx, dy = event.x_root - start_x, event.y_root - start_y
+        try:
+            min_width, min_height = self.parent.minsize()
+            min_width, min_height = int(min_width), int(min_height)
+        except Exception:
+            min_width, min_height = 1, 1
+
+        direction = self._resize_direction
+        new_width, new_height = width, height
+        new_x, new_y = x, y
+        if "e" in direction:
+            new_width = max(min_width, width + dx)
+        elif "w" in direction:
+            new_width = max(min_width, width - dx)
+            new_x = x + width - new_width
+        if "s" in direction:
+            new_height = max(min_height, height + dy)
+        elif "n" in direction:
+            new_height = max(min_height, height - dy)
+            new_y = y + height - new_height
+        try:
+            self.parent.geometry(f"{new_width}x{new_height}{new_x:+d}{new_y:+d}")
+        except Exception:
+            pass
+
+    def _on_resize_end(self, _event: Any) -> None:
+        self._resize_direction = None
+        self._resize_start = None
+
+    def _on_resize_destroy(self, event: Any) -> None:
+        if event.widget is not self.parent:
+            return
+        self._restore_resize_cursor()
+        root = self.parent._root()
+        for sequence, binding_id in self._resize_bindings:
+            try:
+                root._unbind(("bind", "all", sequence), binding_id)
+            except Exception:
+                pass
+        self._resize_bindings.clear()
 
     def _on_double_click(self, _event: Any) -> None:
         """Maximiza/restaurar al hacer doble clic sobre el título."""
@@ -5331,7 +5492,7 @@ class Dashboard:
         # Distribución vertical del dashboard (nuevo diseño):
         #
         #   ┌──────────────────────────────────────────────┐
-        #   │  Zona 1: Prompt + Ejecutar   (top, fijo)     │  ← SIEMPRE visible
+        #   │  Prompt + Ejecutar     │  Explorador         │  ← mitad y mitad
         #   ├──────────────────────────────────────────────┤
         #   │                                              │
         #   │  Zona 2 (PROMINENTE):                        │
@@ -5343,9 +5504,7 @@ class Dashboard:
         #   │  └────────────────┴────────────────────────┘ │
         #   │                                              │
         #   ├──────────────────────────────────────────────┤
-        #   │  Zona 3: Explorador de ficheros (bottom)     │  ← se reduce
-        #   ├──────────────────────────────────────────────┤
-        #   │  Barra de contexto           (bottom, fijo)  │  ← SIEMPRE visible
+        #   │  Barra de contexto       │  Info modelo/WS   │  ← mitad y mitad
         #   └──────────────────────────────────────────────┘
         #
         # Las solicitudes de aprobación (HITL) se muestran ahora como
@@ -5378,23 +5537,32 @@ class Dashboard:
             )
             self.title_bar.pack(side="top", fill="x")
 
-        # Zona 1: Prompt + Ejecutar (superior) — SIEMPRE VISIBLE.
-        top = ttk.Frame(self.root, style="TFrame", padding=10)
+        # Fila superior: prompt y explorador comparten el ancho disponible.
+        top = ttk.Frame(self.root, style="TFrame", padding=(10, 8, 10, 4))
         top.pack(side="top", fill="x")
+        top.columnconfigure(0, weight=1, uniform="top_panels")
+        top.columnconfigure(1, weight=1, uniform="top_panels")
+        top.rowconfigure(0, weight=1)
+        prompt_container = ttk.Frame(top, style="TFrame")
+        prompt_container.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        browser_container = ttk.Frame(top, style="TFrame")
+        browser_container.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+        browser_container.pack_propagate(False)
+        browser_container.configure(height=210)
 
         # Sin barra de título personalizada, el botón de ajustes va en la esquina superior derecha.
         if not CONFIG.ui_custom_titlebar:
             ttk.Button(
-                top, text="\u2699", width=3, command=self._open_settings
+                prompt_container, text="\u2699", width=3, command=self._open_settings
             ).place(relx=1.0, x=0, y=0, anchor="ne")
 
-        ttk.Label(top, text="📝 Nueva instrucción para el agente", style="Title.TLabel").pack(
+        ttk.Label(prompt_container, text="📝 Nueva instrucción para el agente", style="Title.TLabel").pack(
             anchor="w"
         )
 
         # Caja del prompt con esquinas redondeadas.
         prompt_card = RoundedFrame(
-            top,
+            prompt_container,
             bg=CONFIG.ui_prompt_bg,
             border_color=CONFIG.ui_card_border_color,
             border_width=CONFIG.ui_card_border_width,
@@ -5422,7 +5590,7 @@ class Dashboard:
         self.prompt_text.bind("<Button-1>", lambda _e: self.prompt_text.focus_force())
         self.root.after(300, self.prompt_text.focus_force)
 
-        btn_row = ttk.Frame(top, style="TFrame")
+        btn_row = ttk.Frame(prompt_container, style="TFrame")
         btn_row.pack(fill="x")
         # Botón principal "Ejecutar" con color de acento.
         RoundedButton(
@@ -5471,21 +5639,85 @@ class Dashboard:
             variable=self.preauth_var,
             style="Card.TCheckbutton",
         ).pack(side="left", padx=(8, 0))
-        self.config_label = ttk.Label(
-            btn_row,
-            text=self._build_config_label_text(),
-            style="TLabel",
+
+        # Explorador de ficheros: ocupa la mitad derecha de la fila superior.
+        browser_panel = RoundedFrame(
+            browser_container,
+            bg=CONFIG.ui_card_bg,
+            border_color=CONFIG.ui_card_border_color,
+            border_width=CONFIG.ui_card_border_width,
+            radius=CONFIG.ui_corner_radius,
+            padding=8,
         )
-        self.config_label.pack(side="right")
+        browser_panel.pack(fill="both", expand=True)
+
+        browser_header = ttk.Frame(browser_panel.inner, style="Card.TFrame")
+        browser_header.pack(fill="x")
+        self.browser_title_var = StringVar(value=f"📁 Explorador: {WORKSPACE_DIR}")
+        ttk.Label(
+            browser_header,
+            textvariable=self.browser_title_var,
+            style="Header.TLabel",
+        ).pack(side="left")
+        browser_btns = ttk.Frame(browser_header, style="Card.TFrame")
+        browser_btns.pack(side="right")
+        RoundedButton(
+            browser_btns,
+            text="⬆ Padre",
+            command=self._on_browser_up,
+            bg=CONFIG.ui_button_bg,
+            fg=CONFIG.ui_button_fg,
+            hover_bg=CONFIG.ui_button_hover_bg,
+            pressed_bg=CONFIG.ui_button_pressed_bg,
+            radius=CONFIG.ui_corner_radius,
+            padding_x=12,
+            padding_y=4,
+        ).pack(side="left")
+        RoundedButton(
+            browser_btns,
+            text="🔄 Refrescar",
+            command=self._refresh_file_browser,
+            bg=CONFIG.ui_button_bg,
+            fg=CONFIG.ui_button_fg,
+            hover_bg=CONFIG.ui_button_hover_bg,
+            pressed_bg=CONFIG.ui_button_pressed_bg,
+            radius=CONFIG.ui_corner_radius,
+            padding_x=12,
+            padding_y=4,
+        ).pack(side="left", padx=(4, 0))
+
+        # Ruta actual del explorador (relativa al workspace).
+        self._browser_current_dir: Path = WORKSPACE_DIR
+        browser_body = ttk.Frame(browser_panel.inner, style="Card.TFrame")
+        browser_body.pack(fill="both", expand=True, pady=(4, 0))
+
+        self.browser_tree = ttk.Treeview(
+            browser_body,
+            columns=("size",),
+            show="tree headings",
+            selectmode="browse",
+        )
+        self.browser_tree.heading("#0", text="Nombre")
+        self.browser_tree.heading("size", text="Tamaño")
+        self.browser_tree.column("#0", width=240, stretch=True)
+        self.browser_tree.column("size", width=90, stretch=False, anchor="e")
+        browser_scroll = ttk.Scrollbar(
+            browser_body, orient="vertical", command=self.browser_tree.yview
+        )
+        self.browser_tree.configure(yscrollcommand=browser_scroll.set)
+        self.browser_tree.pack(side="left", fill="both", expand=True)
+        browser_scroll.pack(side="right", fill="y")
+        self.browser_tree.bind("<Double-1>", self._on_browser_activate)
+        self.browser_tree.bind("<Return>", self._on_browser_activate)
 
         # Barra de progreso de consumo de tokens — SIEMPRE VISIBLE.
         # Se empaqueta con side="bottom" para que quede en la parte
         # inferior de la ventana y nunca quede oculta al redimensionar.
         self._build_context_bar()
 
-        # Contenedor intermedio que ocupa el espacio restante entre el prompt
-        # (arriba) y la barra de contexto (abajo). Alberga la zona 2 (prominente)
-        # y la zona 3 (explorador de ficheros).
+        # Contenedor intermedio que ocupa el espacio restante entre la fila
+        # superior y la barra informativa inferior. La zona de historial y
+        # tareas llega directamente hasta dicha barra.
         middle_container = ttk.Frame(self.root, style="TFrame")
         middle_container.pack(side="top", fill="both", expand=True)
         middle_container.pack_propagate(False)
@@ -5501,7 +5733,7 @@ class Dashboard:
         #         AWAITING_APPROVAL) con sus subtareas anidadas.
         #       * "Tareas terminadas": tareas en estado terminal
         #         (COMPLETED, FAILED, CANCELLED).
-        prominent = ttk.Frame(middle_container, style="TFrame", padding=(10, 0, 10, 6))
+        prominent = ttk.Frame(middle_container, style="TFrame", padding=(10, 0, 10, 0))
         prominent.pack(side="top", fill="both", expand=True)
         prominent.columnconfigure(0, weight=1)  # Historial: 50%
         prominent.columnconfigure(1, weight=1)  # Tabs: 50%
@@ -5658,97 +5890,12 @@ class Dashboard:
         self.task_notebook.add(self.tab_finished, text="✅ Tareas terminadas")
         self.finished_list_frame = self._make_scrollable_frame(self.tab_finished)
 
-        # ==================================================================
-        # Zona 3: Explorador de ficheros del workspace (parte inferior)
-        # ==================================================================
-        # Altura fija reducida para dar más protagonismo a la zona 2.
-        browser_container = ttk.Frame(middle_container, style="TFrame", padding=(10, 0, 10, 6))
-        browser_container.pack(side="top", fill="x")
-        browser_container.pack_propagate(False)
-        browser_container.configure(height=220)
-
-        browser_panel = RoundedFrame(
-            browser_container,
-            bg=CONFIG.ui_card_bg,
-            border_color=CONFIG.ui_card_border_color,
-            border_width=CONFIG.ui_card_border_width,
-            radius=CONFIG.ui_corner_radius,
-            padding=8,
-        )
-        browser_panel.pack(fill="both", expand=True)
-
-        browser_header = ttk.Frame(browser_panel.inner, style="Card.TFrame")
-        browser_header.pack(fill="x")
-        self.browser_title_var = StringVar(value=f"📁 Explorador: {WORKSPACE_DIR}")
-        ttk.Label(
-            browser_header,
-            textvariable=self.browser_title_var,
-            style="Header.TLabel",
-        ).pack(side="left")
-        browser_btns = ttk.Frame(browser_header, style="Card.TFrame")
-        browser_btns.pack(side="right")
-        RoundedButton(
-            browser_btns,
-            text="⬆ Padre",
-            command=self._on_browser_up,
-            bg=CONFIG.ui_button_bg,
-            fg=CONFIG.ui_button_fg,
-            hover_bg=CONFIG.ui_button_hover_bg,
-            pressed_bg=CONFIG.ui_button_pressed_bg,
-            radius=CONFIG.ui_corner_radius,
-            padding_x=12,
-            padding_y=4,
-        ).pack(side="left")
-        RoundedButton(
-            browser_btns,
-            text="🔄 Refrescar",
-            command=self._refresh_file_browser,
-            bg=CONFIG.ui_button_bg,
-            fg=CONFIG.ui_button_fg,
-            hover_bg=CONFIG.ui_button_hover_bg,
-            pressed_bg=CONFIG.ui_button_pressed_bg,
-            radius=CONFIG.ui_corner_radius,
-            padding_x=12,
-            padding_y=4,
-        ).pack(side="left", padx=(4, 0))
-
-        # Ruta actual del explorador (relativa al workspace).
-        self._browser_current_dir: Path = WORKSPACE_DIR
-        # Treeview con scrollbar para mostrar el contenido del directorio.
-        browser_body = ttk.Frame(browser_panel.inner, style="Card.TFrame")
-        browser_body.pack(fill="both", expand=True, pady=(4, 0))
-
-        self.browser_tree = ttk.Treeview(
-            browser_body,
-            columns=("size",),
-            show="tree headings",
-            selectmode="browse",
-        )
-        self.browser_tree.heading("#0", text="Nombre")
-        self.browser_tree.heading("size", text="Tamaño")
-        self.browser_tree.column("#0", width=240, stretch=True)
-        self.browser_tree.column("size", width=90, stretch=False, anchor="e")
-
-        browser_scroll = ttk.Scrollbar(
-            browser_body, orient="vertical", command=self.browser_tree.yview
-        )
-        self.browser_tree.configure(yscrollcommand=browser_scroll.set)
-        self.browser_tree.pack(side="left", fill="both", expand=True)
-        browser_scroll.pack(side="right", fill="y")
-
-        # Doble clic: abre carpeta o muestra el contenido del fichero en
-        # una ventana independiente (Toplevel).
-        self.browser_tree.bind("<Double-1>", self._on_browser_activate)
-        # Tecla Enter: mismo efecto que doble clic.
-        self.browser_tree.bind("<Return>", self._on_browser_activate)
-
         # Carga inicial del explorador.
         self._refresh_file_browser()
 
-        # Almacén de uso de contexto por tarea. La barra visual se construye
-        # en _build_context_bar() como un frame independiente en self.root,
-        # empaquetado con side="bottom" para que permanezca visible aunque
-        # la ventana se reduzca.
+        # Almacén de uso de contexto por tarea. La barra visual y la
+        # información del modelo se construyen en _build_context_bar() en
+        # la fila inferior, siempre visible aunque la ventana se reduzca.
         self._context_usage: Dict[int, Dict[str, int]] = {}
 
         # Cola FIFO de solicitudes de aprobación pendientes. Cada solicitud
@@ -5762,18 +5909,16 @@ class Dashboard:
         # recrearla aquí, o la casilla quedaría desvinculada de la variable.
 
     def _build_context_bar(self) -> None:
-        """Crea la barra de progreso de consumo de tokens como frame propio.
+        """Crea la barra inferior en dos mitades: contexto e información LLM."""
+        status_frame = ttk.Frame(self.root, style="TFrame", padding=(10, 4, 10, 8))
+        status_frame.pack(side="bottom", fill="x")
+        status_frame.columnconfigure(0, weight=1, uniform="status_panels")
+        status_frame.columnconfigure(1, weight=1, uniform="status_panels")
 
-        Se empaqueta en self.root con side="bottom" después del panel de
-        aprobación, de modo que quede visualmente **encima** de dicho panel
-        y nunca quede oculta al redimensionar la ventana (el área que se
-        reduce es el contenedor intermedio con las zonas 2 y 3).
-
-        La barra usa un GradientCanvas con esquinas redondeadas para
-        conseguir un aspecto moderno.
-        """
-        context_frame = ttk.Frame(self.root, style="TFrame", padding=(10, 4))
-        context_frame.pack(side="bottom", fill="x", padx=10, pady=(0, 4))
+        context_frame = ttk.Frame(status_frame, style="TFrame", padding=(0, 0, 6, 0))
+        context_frame.grid(row=0, column=0, sticky="nsew")
+        info_frame = ttk.Frame(status_frame, style="TFrame", padding=(6, 0, 0, 0))
+        info_frame.grid(row=0, column=1, sticky="nsew")
 
         ttk.Label(
             context_frame,
@@ -5800,6 +5945,20 @@ class Dashboard:
             textvariable=self.context_label_var,
             style="TLabel",
         ).pack(side="right")
+
+        self.config_label = ttk.Label(
+            info_frame,
+            text=self._build_config_label_text(),
+            style="TLabel",
+            anchor="w",
+            justify="left",
+        )
+        self.config_label.pack(fill="x", expand=True)
+
+        def _fit_config_label(event: Any) -> None:
+            self.config_label.configure(wraplength=max(100, event.width - 16))
+
+        info_frame.bind("<Configure>", _fit_config_label)
 
     # --- Acciones de la Zona 1 ---
 
@@ -6686,7 +6845,7 @@ class Dashboard:
             try:
                 file_title_bar = CustomTitleBar(
                     viewer,
-                    title=f"📄 {target.name}",
+                    title=f"{target.name}",
                     icon="📄",
                     bg=CONFIG.ui_titlebar_color,
                     fg=CONFIG.ui_titlebar_text_color,
