@@ -5735,8 +5735,8 @@ class Dashboard:
         #         (COMPLETED, FAILED, CANCELLED).
         prominent = ttk.Frame(middle_container, style="TFrame", padding=(10, 0, 10, 0))
         prominent.pack(side="top", fill="both", expand=True)
-        prominent.columnconfigure(0, weight=1)  # Historial: 50%
-        prominent.columnconfigure(1, weight=1)  # Tabs: 50%
+        prominent.columnconfigure(0, weight=1, uniform="top_panels")  # Historial: 50%
+        prominent.columnconfigure(1, weight=1, uniform="top_panels")  # Tabs: 50%
         prominent.rowconfigure(0, weight=1)
 
         # --- Columna izquierda: Historial de la tarea seleccionada ---
