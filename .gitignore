@@ -1,6 +1,7 @@
 /.venv
 /venv
 /env
+/log
 /binarios
 /binarios_nvidia
 /hercules.build

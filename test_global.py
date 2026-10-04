@@ -14,6 +14,7 @@ Suites ejecutadas (en este orden):
     6. test_ui_layout.py         — layout del dashboard con contenido realista.
     7. test_modern_titlebar.py   — helper de barra de título moderna (DWM).
     8. test_welcome_dialog.py    — diálogo de bienvenida.
+    9. test_computer_tools.py    — herramientas autorizadas de captura y ratón.
 
 Cada suite se lanza como subproceso independiente para mantener el
 aislamiento entre ellas (cada una crea y destruye su propio entorno
@@ -58,6 +59,7 @@ SUITES: List[tuple] = [
     (SCRIPT_DIR / "test_ui_layout.py",       "test_ui_layout"),
     (SCRIPT_DIR / "test_modern_titlebar.py", "test_modern_titlebar"),
     (SCRIPT_DIR / "test_welcome_dialog.py",  "test_welcome_dialog"),
+    (SCRIPT_DIR / "test_computer_tools.py",  "test_computer_tools"),
 ]
 
 

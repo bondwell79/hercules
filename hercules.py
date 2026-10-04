@@ -51,6 +51,8 @@ from tkinter import BooleanVar, Canvas, Frame, Label as TkLabel, Tk, StringVar, 
 from tkinter.scrolledtext import ScrolledText
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+import computer_tools
+
 
 # ============================================================================
 # CONFIGURACIÓN (config.ini + variables de entorno)
@@ -938,6 +940,28 @@ COMMAND_TIMEOUT = CONFIG.command_timeout
 
 # Directorio del script (para resolver rutas relativas como modelos/).
 SCRIPT_DIR = Path(__file__).parent.resolve()
+LOG_DIR = SCRIPT_DIR / "log"
+
+
+_LLM_LOG_LOCK = threading.Lock()
+
+
+def _log_llm_exchange(direction: str, endpoint: str, content: str) -> None:
+    """Registra el cuerpo de una petición/respuesta LLM en el log diario."""
+    now = datetime.now()
+    log_path = LOG_DIR / f"llm_{now.strftime('%Y%m%d')}.txt"
+    entry = (
+        f"[{now.isoformat(timespec='seconds')}] {direction} {endpoint}\n"
+        f"{content}\n"
+        f"{'-' * 80}\n"
+    )
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        with _LLM_LOG_LOCK, log_path.open("a", encoding="utf-8") as log_file:
+            log_file.write(entry)
+    except OSError:
+        pass
+
 
 # Directorio de trabajo restringido para operaciones de archivos
 WORKSPACE_DIR = Path(CONFIG.workspace_path).resolve()
@@ -1474,17 +1498,23 @@ class LLMConnector:
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = tool_choice or "auto"
+        _log_llm_exchange("SALIDA LOCAL", "llama-cpp-python", json.dumps(kwargs, ensure_ascii=False))
         try:
             result = self._local_llm.create_chat_completion(**kwargs)
         except Exception as e:  # noqa: BLE001
+            _log_llm_exchange("ENTRADA LOCAL ERROR", "llama-cpp-python", f"{type(e).__name__}: {e}")
             raise LLMError(f"Error en inferencia local: {e}") from e
         # llama-cpp-python devuelve un dict estilo OpenAI.
         if isinstance(result, dict):
-            return result
-        try:
-            return dict(result)
-        except Exception as e:  # noqa: BLE001
-            raise LLMError(f"Respuesta local en formato inesperado: {e}") from e
+            response = result
+        else:
+            try:
+                response = dict(result)
+            except Exception as e:  # noqa: BLE001
+                _log_llm_exchange("ENTRADA LOCAL ERROR", "llama-cpp-python", f"{type(e).__name__}: {e}")
+                raise LLMError(f"Respuesta local en formato inesperado: {e}") from e
+        _log_llm_exchange("ENTRADA LOCAL", "llama-cpp-python", json.dumps(response, ensure_ascii=False, default=str))
+        return response
 
     # --- Backend HTTP (OpenAI / Ollama / llama.cpp server) ---
 
@@ -1507,7 +1537,9 @@ class LLMConnector:
             # "auto" deja al modelo decidir; "required" fuerza al menos una.
             payload["tool_choice"] = tool_choice or "auto"
 
-        data = json.dumps(payload).encode("utf-8")
+        request_body = json.dumps(payload, ensure_ascii=False)
+        _log_llm_exchange("SALIDA", url, request_body)
+        data = request_body.encode("utf-8")
         req = urllib.request.Request(
             url,
             data=data,
@@ -1522,11 +1554,14 @@ class LLMConnector:
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 body = resp.read().decode("utf-8")
+                _log_llm_exchange("ENTRADA", url, body)
                 return json.loads(body)
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", errors="replace")
+            _log_llm_exchange("ENTRADA ERROR", url, detail)
             raise LLMError(f"HTTP {e.code} desde {url}: {detail}") from e
         except urllib.error.URLError as e:
+            _log_llm_exchange("ENTRADA ERROR", url, f"{type(e).__name__}: {e.reason}")
             raise LLMError(f"No se pudo conectar con {url}: {e.reason}") from e
         except json.JSONDecodeError as e:
             raise LLMError(f"Respuesta JSON inválida del LLM: {e}") from e
@@ -2010,6 +2045,25 @@ def tool_get_current_time(_args: Dict[str, Any]) -> str:
     return datetime.now(UTC).replace(tzinfo=None).isoformat(timespec="seconds")
 
 
+def tool_take_screenshot(args: Dict[str, Any]) -> str:
+    return computer_tools.take_screenshot(args.get("path"))
+
+
+def tool_mouse_click(args: Dict[str, Any]) -> str:
+    return computer_tools.mouse_click(
+        x=args["x"],
+        y=args["y"],
+        button=args.get("button", "left"),
+        clicks=args.get("clicks", 1),
+    )
+
+
+def tool_mouse_move(args: Dict[str, Any]) -> str:
+    return computer_tools.mouse_move(
+        x=args["x"], y=args["y"], duration=args.get("duration", 0.0)
+    )
+
+
 def tool_write_file(args: Dict[str, Any]) -> str:
     path = _resolve_workspace_path(args.get("path", ""))
     content = args.get("content", "")
@@ -2020,7 +2074,83 @@ def tool_write_file(args: Dict[str, Any]) -> str:
         return f"ERROR al escribir {path}: {e}"
     return f"OK: escrito {len(content)} caracteres en {path}"
 
+
+def tool_create_file(args: Dict[str, Any]) -> str:
+    if "content" not in args or not isinstance(args["content"], str):
+        return "ERROR: 'content' es obligatorio y debe ser texto"
+    path = _resolve_workspace_path(args.get("path", ""))
+    content = args["content"]
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("x", encoding="utf-8", newline="") as file:
+            file.write(content)
+    except FileExistsError:
+        return f"ERROR: el archivo ya existe: {path}"
+    except Exception as e:  # noqa: BLE001
+        return f"ERROR al crear {path}: {e}"
+    return f"OK: creado {len(content)} caracteres en {path}"
+
+
+def tool_edit_file(args: Dict[str, Any]) -> str:
+    path = _resolve_workspace_path(args.get("path", ""))
+    old_text = args.get("old_text", "")
+    new_text = args.get("new_text", "")
+    if not path.exists() or not path.is_file():
+        return f"ERROR: el archivo no existe o no es un archivo: {path}"
+    try:
+        content = path.read_text(encoding="utf-8")
+        if old_text == "":
+            path.write_text(new_text, encoding="utf-8")
+            return f"OK: editado {path}"
+        occurrences = content.count(old_text)
+        if occurrences != 1:
+            return (
+                f"ERROR: se esperaba una única coincidencia de 'old_text' en {path}, "
+                f"pero se encontraron {occurrences}"
+            )
+        path.write_text(content.replace(old_text, new_text, 1), encoding="utf-8")
+    except Exception as e:  # noqa: BLE001
+        return f"ERROR al editar {path}: {e}"
+    return f"OK: editado {path}"
+
+
+def tool_search_in_files(args: Dict[str, Any]) -> str:
+    query = args.get("query", "")
+    base = _resolve_workspace_path(args.get("path", "."))
+    file_pattern = args.get("file_pattern", "*")
+    if not query:
+        return "ERROR: 'query' es obligatorio"
+    if not base.exists() or not base.is_dir():
+        return f"ERROR: directorio inválido: {base}"
+
+    matches: List[str] = []
+    try:
+        for candidate in base.rglob(file_pattern):
+            if not candidate.is_file():
+                continue
+            resolved = candidate.resolve()
+            try:
+                resolved.relative_to(WORKSPACE_DIR)
+            except ValueError:
+                continue
+            try:
+                lines = resolved.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            for line_number, line in enumerate(lines, start=1):
+                if query in line:
+                    relative = resolved.relative_to(WORKSPACE_DIR)
+                    matches.append(f"{relative}:{line_number}: {line}")
+                    if len(matches) >= 200:
+                        matches.append("... [truncado, más de 200 coincidencias]")
+                        return "\n".join(matches)
+    except Exception as e:  # noqa: BLE001
+        return f"ERROR al buscar: {e}"
+    return "\n".join(matches) if matches else "(sin coincidencias)"
+
+
 def _is_command_safe(command: str) -> Tuple[bool, str]:
+
     """
     Analiza un comando y devuelve (es_seguro, razón_si_no).
     
@@ -2200,6 +2330,81 @@ class ToolsRegistry:
         )
         self.register(
             ToolDefinition(
+                name="take_screenshot",
+                description=(
+                    "Captura la pantalla y guarda una imagen PNG. "
+                    "Argumento opcional: path (ruta de salida; por defecto, "
+                    "un archivo en el directorio actual)."
+                ),
+                risk=RiskLevel.CRITICAL,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Ruta de salida del PNG (opcional).",
+                        }
+                    },
+                },
+                runner=tool_take_screenshot,
+            )
+        )
+        self.register(
+            ToolDefinition(
+                name="mouse_click",
+                description=(
+                    "Hace clic con el ratón en coordenadas de pantalla. "
+                    "Argumentos: x, y; button (left/right/middle, por defecto left), "
+                    "clicks (por defecto 1)."
+                ),
+                risk=RiskLevel.CRITICAL,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "x": {"type": "integer", "description": "Coordenada horizontal."},
+                        "y": {"type": "integer", "description": "Coordenada vertical."},
+                        "button": {
+                            "type": "string",
+                            "enum": ["left", "right", "middle"],
+                            "description": "Botón del ratón.",
+                        },
+                        "clicks": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Número de clics.",
+                        },
+                    },
+                    "required": ["x", "y"],
+                },
+                runner=tool_mouse_click,
+            )
+        )
+        self.register(
+            ToolDefinition(
+                name="mouse_move",
+                description=(
+                    "Mueve el puntero a coordenadas de pantalla. "
+                    "Argumentos: x, y; duration (duración en segundos, por defecto 0)."
+                ),
+                risk=RiskLevel.CRITICAL,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "x": {"type": "integer", "description": "Coordenada horizontal."},
+                        "y": {"type": "integer", "description": "Coordenada vertical."},
+                        "duration": {
+                            "type": "number",
+                            "minimum": 0,
+                            "description": "Duración del movimiento en segundos.",
+                        },
+                    },
+                    "required": ["x", "y"],
+                },
+                runner=tool_mouse_move,
+            )
+        )
+        self.register(
+            ToolDefinition(
                 name="write_file",
                 description=(
                     "Escribe contenido en un archivo del workspace (crea "
@@ -2221,6 +2426,66 @@ class ToolsRegistry:
                     "required": ["path", "content"],
                 },
                 runner=tool_write_file,
+            )
+        )
+        self.register(
+            ToolDefinition(
+                name="create_file",
+                description=(
+                    "Crea un archivo nuevo dentro del workspace sin sobrescribir uno existente. "
+                    "Argumentos: path, content (obligatorio)."
+                ),
+                risk=RiskLevel.CRITICAL,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Ruta del archivo nuevo."},
+                        "content": {"type": "string", "description": "Contenido inicial (opcional)."},
+                    },
+                    "required": ["path", "content"],
+                },
+                runner=tool_create_file,
+            )
+        )
+        self.register(
+            ToolDefinition(
+                name="edit_file",
+                description=(
+                    "Reemplaza una cadena exacta en un archivo existente, solo si hay una coincidencia; "
+                    "si old_text está vacío, sustituye todo el contenido. "
+                    "Argumentos: path, old_text, new_text."
+                ),
+                risk=RiskLevel.CRITICAL,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Ruta del archivo a editar."},
+                        "old_text": {"type": "string", "description": "Texto a reemplazar; si está vacío, sustituye todo el contenido del archivo."},
+                        "new_text": {"type": "string", "description": "Texto que reemplaza la coincidencia."},
+                    },
+                    "required": ["path", "old_text", "new_text"],
+                },
+                runner=tool_edit_file,
+            )
+        )
+        self.register(
+            ToolDefinition(
+                name="search_in_files",
+                description=(
+                    "Busca una cadena literal en el contenido de archivos dentro del workspace. "
+                    "Argumentos: query, path (opcional), file_pattern (opcional, por defecto '*')."
+                ),
+                risk=RiskLevel.SAFE,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Texto literal a buscar."},
+                        "path": {"type": "string", "description": "Directorio base (opcional)."},
+                        "file_pattern": {"type": "string", "description": "Patrón glob de archivos (opcional)."},
+                    },
+                    "required": ["query"],
+                },
+                runner=tool_search_in_files,
             )
         )
         self.register(
@@ -2450,6 +2715,9 @@ SYSTEM_PROMPT = """Eres un agente autónomo con acceso a HERRAMIENTAS (tools/fun
 
 HERRAMIENTAS DISPONIBLES:
 - read_file(path): Lee el contenido de un archivo del workspace.
+- create_file(path, content): Crea un archivo nuevo sin sobrescribir uno existente.
+- edit_file(path, old_text, new_text): Reemplaza una coincidencia exacta; si old_text está vacío, sustituye todo el contenido.
+- search_in_files(query, path, file_pattern): Busca texto literal dentro de archivos.
 - write_file(path, content): Escribe contenido en un archivo del workspace.
 - list_directory(path): Lista el contenido de un directorio del workspace.
 - search_files(pattern, path): Busca archivos por patrón glob.
@@ -2983,7 +3251,7 @@ class Agent:
                             "content": result.output,
                         }
                     )
-                    if tc.name in {"write_file", "execute_command", "delete_file"} and result.success:
+                    if tc.name in {"create_file", "edit_file", "write_file", "execute_command", "delete_file"} and result.success:
                         # refrescamos explorador de ficheros
                         self.ui_queue.put({"type": "refresh_file_browser", "task_id": task_id})
 
@@ -3041,8 +3309,9 @@ _DEFAULT_SUBTASK_PROMPTS: Dict[SubtaskType, str] = {
         "Eres un desarrollador. Tu misión es implementar la solución "
         "basándote en los REQUISITOS TÉCNICOS proporcionados más abajo.\n\n"
         "REGLAS:\n"
-        "1. USA las herramientas disponibles (write_file, execute_command, "
-        "read_file, etc.) para implementar la solución.\n"
+        "1. USA las herramientas disponibles (create_file, edit_file, "
+        "search_in_files, write_file, execute_command, read_file, etc.) "
+        "para implementar la solución.\n"
         "2. Sigue los requisitos al pie de la letra.\n"
         "3. Cuando termines la implementación, proporciona una respuesta "
         "final concisa describiendo qué has creado/modificado y dónde.\n"
@@ -3075,8 +3344,8 @@ _DEFAULT_SUBTASK_PROMPTS: Dict[SubtaskType, str] = {
         "CORREGIDA de la solución.\n\n"
         "REGLAS:\n"
         "1. Analiza cuidadosamente los errores reportados.\n"
-        "2. USA las herramientas disponibles (write_file, execute_command, "
-        "read_file, etc.) para corregir los problemas.\n"
+        "2. USA las herramientas disponibles (edit_file, search_in_files, "
+        "write_file, execute_command, read_file, etc.) para corregir los problemas.\n"
         "3. NO repitas los mismos errores: cambia la estrategia si es "
         "necesario.\n"
         "4. Cuando termines, proporciona una respuesta final concisa "
@@ -5007,7 +5276,7 @@ def _format_approval_args(tool_name: str, args: Dict[str, Any]) -> str:
 
     lines: List[str] = []
 
-    if tool_name == "write_file":
+    if tool_name in {"create_file", "write_file"}:
         path = args.get("path", "")
         content = args.get("content", "")
         preview = content if len(content) <= 500 else content[:500] + "\n... [contenido truncado, total: {} caracteres]".format(len(content))
@@ -5016,6 +5285,13 @@ def _format_approval_args(tool_name: str, args: Dict[str, Any]) -> str:
         lines.append("")
         lines.append("── Vista previa del contenido ──")
         lines.append(preview)
+    elif tool_name == "edit_file":
+        path = args.get("path", "")
+        old_text = args.get("old_text", "")
+        new_text = args.get("new_text", "")
+        lines.append(f"📝 Archivo a editar: {path}")
+        lines.append(f"🔎 Texto a reemplazar: {old_text[:500]}")
+        lines.append(f"✏️ Texto nuevo: {new_text[:500]}")
     elif tool_name == "execute_command":
         cmd = args.get("command", "")
         lines.append("💻 Comando a ejecutar:")

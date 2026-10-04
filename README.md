@@ -15,11 +15,12 @@
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen)
+![Dependencies](https://img.shields.io/badge/optional%20dependencies-pyautogui-blue)
 
 ## ✨ Características
 
 - 🤖 **Agente** con bucle de razonamiento y herramientas.
+- 🖱️ **Herramientas de escritorio**: captura de pantalla, clic y movimiento del ratón, siempre sujetas a aprobación humana.
 - 🎼 **Descomposición automática en subtareas:** cada tarea se divide en Requisitos → Desarrollo → Ejecución/Verificación → Rectificación (si falla, hasta `max_rectification_retries` intentos). Las plantillas de prompt se editan en `subtareas.ini`.
 - 🛡️ **Human-in-the-Loop (HITL):** aprobación manual de acciones críticas mediante popups modales, con preautorización opcional por el propio LLM y análisis de seguridad de comandos.
 - 🪟 **Barra de título moderna** en Windows 10/11 (DWM): estilos `system`, `dark`, `accent` y `custom`.
@@ -64,6 +65,7 @@ Todas estas opciones se configuran en la sección `[UI]` de `config.ini`:
 
 - Python 3.11 o superior
 - Creado para windows pero compatible con linux.
+- Opcional: `pyautogui` (para las herramientas autorizadas de captura de pantalla y ratón; instalar con `python -m pip install pyautogui`).
 - Opcional: `llama-cpp-python` (solo para modo local)
 - Opcional: un modelo GGUF (ver carpeta `modelos/`)
 
@@ -104,6 +106,7 @@ Suites individuales:
 | `test_ui_layout.py` | layout del dashboard con contenido realista |
 | `test_modern_titlebar.py` | helper de barra de título (DWM) |
 | `test_welcome_dialog.py` | diálogo de bienvenida |
+| `test_computer_tools.py` | herramientas de captura de pantalla y control del ratón |
 
 ## 🏗️ Compilar ejecutable en Windows
 
