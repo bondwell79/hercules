@@ -2457,7 +2457,7 @@ class ToolsRegistry:
                     "Argumentos: x, y; button (left/right/middle, por defecto left), "
                     "clicks (por defecto 1)."
                 ),
-                risk=RiskLevel.CRITICAL,
+                risk=RiskLevel.SAFE,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -2486,7 +2486,7 @@ class ToolsRegistry:
                     "Mueve el puntero a coordenadas de pantalla. "
                     "Argumentos: x, y; duration (duración en segundos, por defecto 0)."
                 ),
-                risk=RiskLevel.CRITICAL,
+                risk=RiskLevel.SAFE,
                 parameters={
                     "type": "object",
                     "properties": {
