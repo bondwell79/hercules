@@ -5607,6 +5607,7 @@ class Dashboard:
 
         # Aplicar configuración de UI desde config.ini.
         self._apply_ui_config()
+        self.root.after_idle(lambda: _force_taskbar_visibility(self.root))
 
         self.db = Database()
         # Limpieza de arranque: elimina cualquier tarea que NO haya terminado
