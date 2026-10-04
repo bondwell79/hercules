@@ -27,7 +27,7 @@
 - 🔌 **Modo dual LLM:** local (GGUF con `llama-cpp-python`) o HTTP (OpenAI/Ollama/llama.cpp server).
 - 📊 **Dashboard tkinter** con 4 zonas: prompt, tablero de tareas, historial y panel de aprobación.
 - 💾 **Persistencia SQLite** historial de tareas realizadas.
-- 📦 **Ejecutable autónomo** compilable con Nuitka (cero instalación en el destino).
+- 📦 **Ejecutable autónomo** compilable con Nuitka (cero instalación en el destino), con icono propio de Hercules.
 
 ## 🎨 Interfaz moderna
 

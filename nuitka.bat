@@ -1,1 +1,1 @@
-python -m nuitka --standalone --windows-console-mode=disable --include-package=llama_cpp --include-package-data=llama_cpp --enable-plugin=tk-inter hercules.py
+python -m nuitka --standalone --windows-console-mode=disable --windows-icon-from-ico=hercules.ico --include-data-files=hercules.ico=hercules.ico --include-package=llama_cpp --include-package-data=llama_cpp --enable-plugin=tk-inter hercules.py

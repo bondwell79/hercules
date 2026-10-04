@@ -5577,6 +5577,12 @@ class Dashboard:
     def __init__(self, root: Tk) -> None:
         self.root = root
         self.root.title(f"Hercules {VERSION}")
+        try:
+            icon_path = SCRIPT_DIR / "hercules.ico"
+            if icon_path.is_file():
+                self.root.iconbitmap(default=str(icon_path))
+        except Exception:  # noqa: BLE001
+            pass
         self.root.geometry("1920x1080")
         # Tamaño mínimo: ancho suficiente para el tablero en 2 columnas y
         # alto suficiente para que el prompt (Zona 1) y el panel de
