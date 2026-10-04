@@ -4758,6 +4758,21 @@ def _force_taskbar_visibility(window: Any) -> None:
             SetWindowLongW(
                 hwnd, GWL_EXSTYLE, (style | WS_EX_APPWINDOW) & ~WS_EX_TOOLWINDOW
             )
+            SetWindowPos = user32.SetWindowPos
+            SetWindowPos.restype = wintypes.BOOL
+            SetWindowPos.argtypes = [
+                wintypes.HWND, wintypes.HWND, wintypes.INT, wintypes.INT,
+                wintypes.INT, wintypes.INT, wintypes.UINT,
+            ]
+            SWP_NOSIZE = 0x0001
+            SWP_NOMOVE = 0x0002
+            SWP_NOZORDER = 0x0004
+            SWP_NOACTIVATE = 0x0010
+            SWP_FRAMECHANGED = 0x0020
+            SetWindowPos(
+                hwnd, None, 0, 0, 0, 0,
+                SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            )
         except Exception:
             pass
     except Exception:
