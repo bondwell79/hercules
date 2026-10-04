@@ -20,7 +20,7 @@
 ## ✨ Características
 
 - 🤖 **Agente** con bucle de razonamiento y herramientas.
-- 🖱️ **Herramientas de escritorio**: captura de pantalla, clic y movimiento del ratón, siempre sujetas a aprobación humana.
+- 🖱️ **Herramientas de escritorio**: la captura de pantalla (`take_screenshot`) no requiere aprobación; los clics y movimientos del ratón sí requieren autorización humana. La captura se adjunta como imagen multimodal en la siguiente petición al modelo, limitada a 4 MB (si el proveedor/modelo admite imágenes). Las capturas PNG que superan ese límite se comprimen y convierten a JPEG para el envío.
 - 🎼 **Descomposición automática en subtareas:** cada tarea se divide en Requisitos → Desarrollo → Ejecución/Verificación → Rectificación (si falla, hasta `max_rectification_retries` intentos). Las plantillas de prompt se editan en `subtareas.ini`.
 - 🛡️ **Human-in-the-Loop (HITL):** aprobación manual de acciones críticas mediante popups modales, con preautorización opcional por el propio LLM y análisis de seguridad de comandos.
 - 🪟 **Barra de título moderna** en Windows 10/11 (DWM): estilos `system`, `dark`, `accent` y `custom`.
@@ -38,7 +38,8 @@ La interfaz gráfica ha sido rediseñada con un aspecto moderno y personalizable
 - **Efectos hover y pressed** en los botones: cambian de color al pasar el ratón por encima y al hacer clic, con una animación suave de transición.
 - **Transparencia de la ventana** configurable (rango 0.5 - 1.0) mediante el atributo `-alpha` de tkinter.
 - **Color de acento** para títulos y cabeceras, configurable desde `config.ini`.
-- **Botón "Ejecutar" destacado** con color de acento (azul) para diferenciarlo de los botones secundarios.
+- **Botón "Ejecutar" destacado** con color de acento (azul) para diferenciarlo de los botones secundarios; permanece deshabilitado junto al prompt mientras se procesa toda la cola de tareas.
+- **Botón "Abortar tareas"** junto a "Ejecutar" para cancelar la ejecución en curso.
 - **Botón "Denegar/Cancelar" en rojo** y **"Permitir" en verde** para identificar visualmente las acciones críticas del panel HITL.
 
 Todas estas opciones se configuran en la sección `[UI]` de `config.ini`:

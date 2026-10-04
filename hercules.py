@@ -28,8 +28,10 @@ Configuración mediante variables de entorno:
 
 from __future__ import annotations
 import re
+import base64
 import collections
 import configparser
+import io
 import json
 import os
 import queue
@@ -37,6 +39,7 @@ import sqlite3
 import subprocess
 import sys
 import threading
+import time
 from datetime import UTC, datetime
 import traceback
 import urllib.error
@@ -962,13 +965,35 @@ LOG_DIR = SCRIPT_DIR / "log"
 _LLM_LOG_LOCK = threading.Lock()
 
 
+def _redact_image_payloads(value: Any) -> Any:
+    """Oculta los bytes Base64 de imágenes antes de registrar peticiones LLM."""
+    if isinstance(value, dict):
+        sanitized = {key: _redact_image_payloads(item) for key, item in value.items()}
+        image_url = sanitized.get("image_url")
+        if isinstance(image_url, dict):
+            url = image_url.get("url")
+            if isinstance(url, str) and url.startswith("data:image/"):
+                image_url["url"] = "data:image/[contenido omitido del log]"
+        return sanitized
+    if isinstance(value, list):
+        return [_redact_image_payloads(item) for item in value]
+    return value
+
+
 def _log_llm_exchange(direction: str, endpoint: str, content: str) -> None:
     """Registra el cuerpo de una petición/respuesta LLM en el log diario."""
+    try:
+        logged_content = json.dumps(
+            _redact_image_payloads(json.loads(content)), ensure_ascii=False
+        )
+    except (json.JSONDecodeError, TypeError):
+        logged_content = content
+
     now = datetime.now()
     log_path = LOG_DIR / f"llm_{now.strftime('%Y%m%d')}.txt"
     entry = (
         f"[{now.isoformat(timespec='seconds')}] {direction} {endpoint}\n"
-        f"{content}\n"
+        f"{logged_content}\n"
         f"{'-' * 80}\n"
     )
     try:
@@ -1131,6 +1156,61 @@ class ToolResult:
     name: str
     success: bool
     output: str
+    image_data: Optional[str] = None
+
+
+def _screenshot_data_uri(output: str) -> Optional[str]:
+    """Carga la captura generada por la herramienta como un data URI PNG."""
+    prefix = "Captura de pantalla guardada en: "
+    if not output.startswith(prefix):
+        return None
+
+    path_text = output[len(prefix):].rsplit(" (", 1)[0]
+    screenshot_path = Path(path_text)
+    try:
+        screenshot_path = screenshot_path.resolve(strict=True)
+        screenshot_path.relative_to(WORKSPACE_DIR)
+        if screenshot_path.suffix.lower() != ".png" or not screenshot_path.is_file():
+            return None
+        image_bytes = screenshot_path.read_bytes()
+    except (OSError, ValueError):
+        return None
+
+    if not image_bytes.startswith(bytes.fromhex("89504e470d0a1a0a")):
+        return None
+    if len(image_bytes) > 4 * 1024 * 1024:
+        try:
+            from PIL import Image
+
+            with Image.open(screenshot_path) as image:
+                image = image.convert("RGB")
+                for _ in range(8):
+                    buffer = io.BytesIO()
+                    image.save(buffer, format="JPEG", quality=85, optimize=True)
+                    image_bytes = buffer.getvalue()
+                    if len(image_bytes) <= 4 * 1024 * 1024:
+                        break
+                    image.thumbnail((max(1, int(image.width * 0.8)), max(1, int(image.height * 0.8))))
+                else:
+                    return None
+            mime_type = "image/jpeg"
+        except Exception:  # noqa: BLE001
+            return None
+    else:
+        mime_type = "image/png"
+    encoded = base64.b64encode(image_bytes).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def _image_message(image_data: str) -> Dict[str, Any]:
+    """Crea un mensaje multimodal compatible con Chat Completions."""
+    return {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "Analiza la siguiente captura de pantalla."},
+            {"type": "image_url", "image_url": {"url": image_data}},
+        ],
+    }
 
 
 # ============================================================================
@@ -2356,7 +2436,7 @@ class ToolsRegistry:
                     "Argumento opcional: path (ruta de salida relativa al workspace; "
                     "por defecto, un archivo en la raíz del workspace)."
                 ),
-                risk=RiskLevel.CRITICAL,
+                risk=RiskLevel.SAFE,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -2609,6 +2689,7 @@ class PermissionManager:
         task_id: int,
         tool: ToolDefinition,
         arguments: Dict[str, Any],
+        cancel_event: Optional[threading.Event] = None,
     ) -> PermissionDecision:
         """
         Solicita aprobación humana para una herramienta CRITICAL.
@@ -2621,6 +2702,9 @@ class PermissionManager:
                 True,
                 "autorización omitida por configuración (no_authorization=true)",
             )
+
+        if cancel_event is not None and cancel_event.is_set():
+            return PermissionDecision(False, "tarea abortada por el usuario")
 
         request_id = uuid.uuid4().hex
         event = threading.Event()
@@ -2650,7 +2734,13 @@ class PermissionManager:
             wait_timeout = max(60.0, float(CONFIG.preauth_timeout) + 30.0)
         else:
             wait_timeout = 600.0  # 10 minutos máximo.
-        event.wait(timeout=wait_timeout)
+        deadline = time.monotonic() + wait_timeout
+        while not event.wait(timeout=min(0.2, max(0.0, deadline - time.monotonic()))):
+            if cancel_event is not None and cancel_event.is_set():
+                self.resolve(request_id, False, "tarea abortada por el usuario")
+                break
+            if time.monotonic() >= deadline:
+                break
 
         with self._lock:
             decision = self._decisions.pop(request_id, PermissionDecision(False, "timeout"))
@@ -2847,6 +2937,19 @@ class Agent:
             "",
         ]
 
+        latest_image_message = next(
+            (
+                msg for msg in reversed(middle)
+                if msg.get("role") == "user"
+                and isinstance(msg.get("content"), list)
+                and any(
+                    isinstance(part, dict) and part.get("type") == "image_url"
+                    for part in msg["content"]
+                )
+            ),
+            None,
+        )
+
         # Extraer las últimas interacciones (pensamientos, tools, resultados).
         recent_thoughts: List[str] = []
         recent_tool_calls: List[str] = []
@@ -2915,16 +3018,23 @@ class Agent:
                     f"Iniciando compactación del contexto."
                 ),
             )
+        compacted_count = 4 if latest_image_message is not None else 3
+        summary_description = "system + user + resumen"
+        if latest_image_message is not None:
+            summary_description += " + imagen"
         self._log(
             task_id,
             EventType.CONTEXT_COMPACTED,
             (
                 f"Contexto compactado: {len(messages)} mensajes → "
-                f"3 mensajes (system + user + resumen)."
+                f"{compacted_count} mensajes ({summary_description})."
             ),
         )
 
-        return [system_msg, user_msg, summary_msg]
+        compacted = [system_msg, user_msg, summary_msg]
+        if latest_image_message is not None:
+            compacted.append(latest_image_message)
+        return compacted
 
     # --- Ejecución de tool calls ---
 
@@ -2932,6 +3042,7 @@ class Agent:
         self,
         task_id: int,
         call: ToolCall,
+        cancel_event: Optional[threading.Event] = None,
     ) -> ToolResult:
         tool = self.tools.get(call.name)
         if tool is None:
@@ -2950,7 +3061,12 @@ class Agent:
                     f"'{tool.name}' con argumentos: {json.dumps(call.arguments, ensure_ascii=False)}"
                 ),
             )
-            decision = self.permissions.request(task_id, tool, call.arguments)
+            if cancel_event is None:
+                decision = self.permissions.request(task_id, tool, call.arguments)
+            else:
+                decision = self.permissions.request(
+                    task_id, tool, call.arguments, cancel_event=cancel_event
+                )
             if not decision.granted:
                 self._log(
                     task_id,
@@ -3017,7 +3133,12 @@ class Agent:
             log_event,
             f"[{tool.name}] {log_prefix}\n{output}",
         )
-        return ToolResult(call.id, call.name, success, output)
+        image_data = (
+            _screenshot_data_uri(output)
+            if success and tool.name == "take_screenshot"
+            else None
+        )
+        return ToolResult(call.id, call.name, success, output, image_data)
 
     # --- Estimación de uso de contexto ---
 
@@ -3040,6 +3161,14 @@ class Agent:
             content = msg.get("content") or ""
             if isinstance(content, str):
                 total_chars += len(content)
+            elif isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        text = part.get("text", "")
+                        if isinstance(text, str):
+                            total_chars += len(text)
+                    elif isinstance(part, dict) and part.get("type") == "image_url":
+                        total_chars += 4096
             # Contar también los argumentos de tool_calls.
             for tc in msg.get("tool_calls", []) or []:
                 if isinstance(tc, dict):
@@ -3075,12 +3204,19 @@ class Agent:
 
     # --- Bucle principal ---
 
-    def run(self, task: Task) -> None:
+    def run(
+        self,
+        task: Task,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> None:
         """Ejecuta el bucle de razonamiento para una tarea."""
         if task.id is None:
             return
 
         task_id = task.id
+        if cancel_event is not None and cancel_event.is_set():
+            self._set_status(task_id, TaskStatus.CANCELLED)
+            return
         self._set_status(task_id, TaskStatus.IN_PROGRESS)
         self._log(
             task_id,
@@ -3104,6 +3240,10 @@ class Agent:
         loop_detector = LoopDetector(LOOP_THRESHOLD)
         try:
             for iteration in range(1, MAX_ITERATIONS + 1):
+                if cancel_event is not None and cancel_event.is_set():
+                    self._log(task_id, EventType.INFO, "Tarea abortada por el usuario.")
+                    self._set_status(task_id, TaskStatus.CANCELLED)
+                    return
                 self._log(
                     task_id,
                     EventType.INFO,
@@ -3145,6 +3285,11 @@ class Agent:
                 except LLMError as e:
                     self._log(task_id, EventType.ERROR, f"Error LLM: {e}")
                     self._set_status(task_id, TaskStatus.FAILED)
+                    return
+
+                if cancel_event is not None and cancel_event.is_set():
+                    self._log(task_id, EventType.INFO, "Tarea abortada por el usuario.")
+                    self._set_status(task_id, TaskStatus.CANCELLED)
                     return
 
                 content, tool_calls = LLMConnector.parse_assistant_message(raw)
@@ -3254,6 +3399,7 @@ class Agent:
                     )
                     continue
 
+                image_messages: List[Dict[str, Any]] = []
                 for tc in tool_calls:
                     self._log(
                         task_id,
@@ -3263,7 +3409,11 @@ class Agent:
                             f"Argumentos: {json.dumps(tc.arguments, ensure_ascii=False, indent=2)}"
                         ),
                     )
-                    result = self._execute_tool_call(task_id, tc)
+                    if cancel_event is not None and cancel_event.is_set():
+                        self._log(task_id, EventType.INFO, "Tarea abortada por el usuario.")
+                        self._set_status(task_id, TaskStatus.CANCELLED)
+                        return
+                    result = self._execute_tool_call(task_id, tc, cancel_event=cancel_event)
                     messages.append(
                         {
                             "role": "tool",
@@ -3271,9 +3421,13 @@ class Agent:
                             "content": result.output,
                         }
                     )
+                    if result.image_data:
+                        image_messages.append(_image_message(result.image_data))
                     if tc.name in {"create_file", "edit_file", "write_file", "execute_command", "delete_file"} and result.success:
                         # refrescamos explorador de ficheros
                         self.ui_queue.put({"type": "refresh_file_browser", "task_id": task_id})
+
+                messages.extend(image_messages)
 
                 # Publicar uso de contexto tras procesar las herramientas
                 # de esta iteración para que la UI actualice la barra.
@@ -3476,7 +3630,11 @@ class TaskOrchestrator:
 
     # --- API pública ---
 
-    def run(self, parent_task: Task) -> None:
+    def run(
+        self,
+        parent_task: Task,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> None:
         """
         Ejecuta el flujo completo de descomposición para una tarea padre.
 
@@ -3487,6 +3645,9 @@ class TaskOrchestrator:
         if parent_task.id is None:
             return
         parent_id = parent_task.id
+        if cancel_event is not None and cancel_event.is_set():
+            self._cancel_parent(parent_id, "Tarea abortada por el usuario.")
+            return
 
         self._log_parent(
             parent_id,
@@ -3507,8 +3668,11 @@ class TaskOrchestrator:
                 user_prompt=parent_task.prompt,
             ),
         )
-        requirements_output = self._run_subtask(requirements_task)
+        requirements_output = self._run_subtask(requirements_task, cancel_event)
         if requirements_output is None:
+            if cancel_event is not None and cancel_event.is_set():
+                self._cancel_parent(parent_id, "Tarea abortada por el usuario.")
+                return
             self._fail_parent(parent_id, "La subtarea de requisitos no produjo resultado.")
             return
 
@@ -3522,8 +3686,11 @@ class TaskOrchestrator:
                 user_prompt=parent_task.prompt,
             ),
         )
-        solution_output = self._run_subtask(development_task)
+        solution_output = self._run_subtask(development_task, cancel_event)
         if solution_output is None:
+            if cancel_event is not None and cancel_event.is_set():
+                self._cancel_parent(parent_id, "Tarea abortada por el usuario.")
+                return
             self._fail_parent(parent_id, "La subtarea de desarrollo no produjo resultado.")
             return
 
@@ -3533,6 +3700,9 @@ class TaskOrchestrator:
         previous_solution = solution_output
 
         while True:
+            if cancel_event is not None and cancel_event.is_set():
+                self._cancel_parent(parent_id, "Tarea abortada por el usuario.")
+                return
             verification_task = self._create_subtask(
                 parent_id,
                 SubtaskType.EXECUTION_VERIFICATION,
@@ -3543,9 +3713,12 @@ class TaskOrchestrator:
                     user_prompt=parent_task.prompt,
                 ),
             )
-            verification_output = self._run_subtask(verification_task)
+            verification_output = self._run_subtask(verification_task, cancel_event)
 
             if verification_output is None:
+                if cancel_event is not None and cancel_event.is_set():
+                    self._cancel_parent(parent_id, "Tarea abortada por el usuario.")
+                    return
                 self._fail_parent(
                     parent_id,
                     f"La subtarea de verificación (intento {attempt + 1}) "
@@ -3604,8 +3777,11 @@ class TaskOrchestrator:
                     user_prompt=parent_task.prompt,
                 ),
             )
-            rectified_solution = self._run_subtask(rectification_task)
+            rectified_solution = self._run_subtask(rectification_task, cancel_event)
             if rectified_solution is None:
+                if cancel_event is not None and cancel_event.is_set():
+                    self._cancel_parent(parent_id, "Tarea abortada por el usuario.")
+                    return
                 self._fail_parent(
                     parent_id,
                     f"La subtarea de rectificación (intento {attempt + 1}) "
@@ -3650,7 +3826,11 @@ class TaskOrchestrator:
         self.ui_queue.put({"type": "status_change", "task_id": task.id, "status": TaskStatus.PENDING.value})
         return task
 
-    def _run_subtask(self, task: Task) -> Optional[str]:
+    def _run_subtask(
+        self,
+        task: Task,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> Optional[str]:
         """
         Ejecuta una subtarea usando el Agent y devuelve su ``final_answer``.
 
@@ -3666,7 +3846,10 @@ class TaskOrchestrator:
         # El Agent.run() se ejecuta en el hilo del orquestador (que ya es
         # un hilo separado lanzado por el dashboard). Bloqueamos aquí
         # hasta que la subtarea termine.
-        self.agent.run(task)
+        if cancel_event is None:
+            self.agent.run(task)
+        else:
+            self.agent.run(task, cancel_event=cancel_event)
         # Releer la tarea para obtener el estado y respuesta final.
         updated = self.db.get_task(task.id)
         if updated is None:
@@ -3713,6 +3896,22 @@ class TaskOrchestrator:
                 verificacion_estado = False
 
         return verificacion_estado
+
+    def _cancel_parent(self, parent_id: int, reason: str) -> None:
+        """Marca la tarea padre como cancelada y registra el motivo."""
+        self.db.update_task_status(
+            parent_id,
+            TaskStatus.CANCELLED,
+            final_answer=f"CANCELLED: {reason}",
+        )
+        self.ui_queue.put(
+            {"type": "status_change", "task_id": parent_id, "status": TaskStatus.CANCELLED.value}
+        )
+        self._log_parent(
+            parent_id,
+            EventType.STATUS_CHANGE,
+            f"⛔ Tarea padre #{parent_id} → CANCELLED. Motivo: {reason}",
+        )
 
     def _complete_parent(self, parent_id: int, final_answer: str) -> None:
         """Marca la tarea padre como COMPLETED con la respuesta final."""
@@ -4350,6 +4549,10 @@ class RoundedButton:
                 self.canvas.unbind("<Leave>")
                 self.canvas.unbind("<ButtonPress-1>")
                 self.canvas.unbind("<ButtonRelease-1>")
+                self.canvas.unbind("<Return>")
+                self.canvas.unbind("<space>")
+                self.canvas.unbind("<FocusIn>")
+                self.canvas.unbind("<FocusOut>")
                 self.canvas.configure(cursor="arrow")
                 self._animate_to(self._bg)
             else:
@@ -4357,6 +4560,10 @@ class RoundedButton:
                 self.canvas.bind("<Leave>", self._on_leave)
                 self.canvas.bind("<ButtonPress-1>", self._on_press)
                 self.canvas.bind("<ButtonRelease-1>", self._on_release)
+                self.canvas.bind("<Return>", lambda _e: self._invoke())
+                self.canvas.bind("<space>", lambda _e: self._invoke())
+                self.canvas.bind("<FocusIn>", self._on_focus_in)
+                self.canvas.bind("<FocusOut>", self._on_focus_out)
                 self.canvas.configure(cursor="hand2")
         if "bg" in kwargs:
             self._bg = kwargs["bg"]
@@ -5407,6 +5614,8 @@ class Dashboard:
         # Mientras sea True, historial y barra siguen a la última tarea en
         # progreso; pulsar "Ver" lo desactiva y crear una tarea lo reactiva.
         self._follow_active_task = True
+        self._active_task_cancel_event: Optional[threading.Event] = None
+        self._active_task_thread: Optional[threading.Thread] = None
         # Variable de la casilla "Preautorizar" de la barra superior.
         # Se inicializa aquí (antes de _build_layout) porque el checkbox
         # se construye dentro del layout y necesita esta variable.
@@ -5889,7 +6098,7 @@ class Dashboard:
         btn_row = ttk.Frame(prompt_container, style="TFrame")
         btn_row.pack(fill="x")
         # Botón principal "Ejecutar" con color de acento.
-        RoundedButton(
+        self.execute_button = RoundedButton(
             btn_row,
             text="▶ Ejecutar",
             command=self._on_execute,
@@ -5901,7 +6110,22 @@ class Dashboard:
             font=(CONFIG.ui_font_family, CONFIG.ui_font_size, "bold"),
             padding_x=18,
             padding_y=8,
-        ).pack(side="left")
+        )
+        self.execute_button.pack(side="left")
+        self.abort_button = RoundedButton(
+            btn_row,
+            text="⏹ Abortar tareas",
+            command=self._on_abort,
+            bg=CONFIG.ui_button_danger_bg,
+            fg=CONFIG.ui_button_danger_fg,
+            hover_bg=CONFIG.ui_button_danger_hover_bg,
+            pressed_bg=CONFIG.ui_button_danger_bg,
+            radius=CONFIG.ui_corner_radius,
+            padding_x=14,
+            padding_y=6,
+            disabled=True,
+        )
+        self.abort_button.pack(side="left", padx=(8, 0))
         RoundedButton(
             btn_row,
             text="🧹 Limpiar",
@@ -6290,7 +6514,25 @@ class Dashboard:
             )
 
 
+    def _set_task_controls_enabled(self, enabled: bool) -> None:
+        state = "normal" if enabled else "disabled"
+        self.prompt_text.configure(state=state)
+        self.execute_button.configure(state=state)
+        self.abort_button.configure(state="disabled" if enabled else "normal")
+
+    def _on_abort(self) -> None:
+        if self._active_task_cancel_event is not None:
+            self._active_task_cancel_event.set()
+            self.abort_button.configure(state="disabled")
+
+    def _on_task_thread_finished(self) -> None:
+        self._active_task_cancel_event = None
+        self._active_task_thread = None
+        self._set_task_controls_enabled(True)
+
     def _on_execute(self) -> None:
+        if self._active_task_thread is not None and self._active_task_thread.is_alive():
+            return
         prompt = self.prompt_text.get("1.0", "end").strip()
         if not prompt:
             return
@@ -6303,13 +6545,23 @@ class Dashboard:
         self._follow_active_task = True
         self._refresh_task_lists()
         self._select_task(task.id)
-        # Lanza el orquestador en hilo separado.
-        threading.Thread(
-            target=self.orchestrator.run,
-            args=(task,),
+        # Bloquear nuevos envíos hasta que termine el orquestador completo.
+        cancel_event = threading.Event()
+        self._active_task_cancel_event = cancel_event
+        self._set_task_controls_enabled(False)
+
+        def _run_task() -> None:
+            try:
+                self.orchestrator.run(task, cancel_event=cancel_event)
+            finally:
+                self.ui_queue.put({"type": "orchestrator_finished"})
+
+        self._active_task_thread = threading.Thread(
+            target=_run_task,
             daemon=True,
             name=f"orchestrator-task-{task.id}",
-        ).start()
+        )
+        self._active_task_thread.start()
 
     # --- Tablero de tareas ---
 
@@ -6664,6 +6916,8 @@ class Dashboard:
             self._show_approval(event)
         elif etype == "refresh_file_browser":
             self._refresh_file_browser()
+        elif etype == "orchestrator_finished":
+            self._on_task_thread_finished()
 
     def _show_approval(self, event: Dict[str, Any]) -> None:
         """
@@ -7334,8 +7588,8 @@ class ApprovalPopup:
 
         self.window = Toplevel(dashboard.root)
         self.window.title("⚠ Autorización requerida")
-        self.window.geometry("720x520")
-        self.window.minsize(520, 380)
+        self.window.geometry("720x640")
+        self.window.minsize(520, 480)
         try:
             self.window.configure(background=CONFIG.ui_bg_color)
         except Exception:  # noqa: BLE001

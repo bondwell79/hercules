@@ -2,26 +2,13 @@
 """
 test_funcionamiento.py
 
-Test de funcionamiento del agente: verifica que el programa puede aceptar
-dos tareas simultáneas, solicitadas una tras otra por el usuario, y que
-ambas se ejecutan en paralelo hasta completarse correctamente.
+Test de funcionamiento del agente: verifica que las tareas conservan
+historias independientes mientras el agente las ejecuta.
 
 Escenario simulado:
-    1. El usuario escribe el primer prompt y pulsa "Ejecutar".
-       -> Se crea la tarea #1 en estado PENDING y el agente se lanza
-          en un hilo separado.
-    2. Sin esperar a que la tarea #1 termine, el usuario escribe el
-       segundo prompt y vuelve a pulsar "Ejecutar".
-       -> Se crea la tarea #2 en estado PENDING y se lanza un segundo
-          hilo de agente.
-    3. Ambos agentes corren en paralelo. El test verifica que:
-       - Ambas tareas son aceptadas (existen en la BD con IDs distintos).
-       - Ambas tareas pasan por los estados correctos.
-       - Ambas tareas finalizan en estado COMPLETED.
-       - Cada tarea conserva SU prompt y SU respuesta final (no se
-         mezclan entre sí).
-       - Los historiales son independientes (el de la tarea #1 no
-         contiene eventos de la tarea #2 y viceversa).
+    - Cada tarea recibe su propio Agent con su propio MockLLM para aislar
+      el sistema de gestión de tareas a partir de mocks.
+    - Se comprueba que cada tarea llega a COMPLETED y conserva sus datos.
 
 Nota sobre el diseño del test:
     Cada tarea recibe su propio Agent con su propio MockLLM. Esto

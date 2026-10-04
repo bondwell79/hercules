@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import base64
+import random
 import sys
 import tempfile
 import unittest
@@ -32,7 +34,7 @@ class ToolTests(unittest.TestCase):
             "list_directory": hercules.RiskLevel.SAFE,
             "search_files": hercules.RiskLevel.SAFE,
             "get_current_time": hercules.RiskLevel.SAFE,
-            "take_screenshot": hercules.RiskLevel.CRITICAL,
+            "take_screenshot": hercules.RiskLevel.SAFE,
             "mouse_click": hercules.RiskLevel.CRITICAL,
             "mouse_move": hercules.RiskLevel.CRITICAL,
             "write_file": hercules.RiskLevel.CRITICAL,
@@ -62,6 +64,44 @@ class ToolTests(unittest.TestCase):
     def test_search_files(self) -> None:
         self.assertIn("sample.txt", hercules.tool_search_files({"pattern": "*.txt"}))
         self.assertIn("obligatorio", hercules.tool_search_files({"pattern": ""}))
+
+    def test_screenshot_data_uri_requires_workspace_png_and_valid_signature(self) -> None:
+        screenshot = self.workspace / "screen.png"
+        screenshot.write_bytes(bytes.fromhex("89504e470d0a1a0a") + b"image-data")
+        output = f"Captura de pantalla guardada en: {screenshot} (10x20)"
+
+        with patch.object(hercules, "WORKSPACE_DIR", self.workspace):
+            data_uri = hercules._screenshot_data_uri(output)
+
+        self.assertIsNotNone(data_uri)
+        self.assertTrue(data_uri.startswith("data:image/png;base64,"))
+        image_message = hercules._image_message(data_uri)
+        self.assertEqual(image_message["content"][1]["type"], "image_url")
+        redacted = hercules._redact_image_payloads(image_message)
+        self.assertEqual(
+            redacted["content"][1]["image_url"]["url"],
+            "data:image/[contenido omitido del log]",
+        )
+        self.assertIsNone(hercules._screenshot_data_uri("screenshot"))
+
+    def test_oversized_screenshot_is_compressed_under_four_megabytes(self) -> None:
+        from PIL import Image
+
+        screenshot = self.workspace / "large.png"
+        rng = random.Random(42)
+        pixels = rng.randbytes(1800 * 1800 * 3)
+        Image.frombytes("RGB", (1800, 1800), pixels).save(screenshot, format="PNG")
+        self.assertGreater(screenshot.stat().st_size, 4 * 1024 * 1024)
+        output = f"Captura de pantalla guardada en: {screenshot} (1800x1800)"
+
+        with patch.object(hercules, "WORKSPACE_DIR", self.workspace):
+            data_uri = hercules._screenshot_data_uri(output)
+
+        self.assertIsNotNone(data_uri)
+        self.assertTrue(data_uri.startswith("data:image/jpeg;base64,"))
+        encoded_image = data_uri.split(",", 1)[1]
+        image_bytes = base64.b64decode(encoded_image)
+        self.assertLessEqual(len(image_bytes), 4 * 1024 * 1024)
 
     def test_get_current_time_returns_iso_timestamp(self) -> None:
         timestamp = hercules.tool_get_current_time({})
