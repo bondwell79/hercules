@@ -152,7 +152,17 @@ class ToolTests(unittest.TestCase):
     def test_hercules_tool_adapters_forward_arguments(self) -> None:
         with patch.object(hercules.computer_tools, "take_screenshot", return_value="screenshot") as shot:
             self.assertEqual(hercules.tool_take_screenshot({"path": "out.png"}), "screenshot")
-            shot.assert_called_once_with("out.png")
+            shot.assert_called_once_with(self.workspace / "out.png", workspace_dir=self.workspace)
+
+            shot.reset_mock()
+            self.assertEqual(hercules.tool_take_screenshot({}), "screenshot")
+            shot.assert_called_once_with(None, workspace_dir=self.workspace)
+
+            shot.reset_mock()
+            outside_path = Path(self.temp_dir.name).parent / "outside.png"
+            result = hercules.tool_take_screenshot({"path": str(outside_path)})
+            self.assertIn("fuera del workspace", result)
+            shot.assert_not_called()
 
         with patch.object(hercules.computer_tools, "mouse_click", return_value="clicked") as click:
             self.assertEqual(hercules.tool_mouse_click({"x": 2, "y": 3}), "clicked")

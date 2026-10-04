@@ -19,14 +19,28 @@ def _get_pyautogui() -> Any:
     return pyautogui
 
 
-def take_screenshot(path: Optional[str] = None) -> str:
-    """Captura la pantalla y guarda la imagen PNG en la ruta indicada."""
+def take_screenshot(
+    path: Optional[str] = None, workspace_dir: Optional[Path] = None
+) -> str:
+    """Captura la pantalla y guarda el PNG, opcionalmente restringido al workspace."""
     pyautogui = _get_pyautogui()
+    workspace = Path(workspace_dir).expanduser().resolve() if workspace_dir else None
     if path:
-        output_path = Path(path).expanduser().resolve()
+        requested_path = Path(path).expanduser()
+        if workspace is not None and not requested_path.is_absolute():
+            requested_path = workspace / requested_path
+        output_path = requested_path.resolve()
     else:
         filename = datetime.now().strftime("hercules_screenshot_%Y%m%d_%H%M%S_%f.png")
-        output_path = (Path.cwd() / filename).resolve()
+        output_path = ((workspace or Path.cwd()) / filename).resolve()
+
+    if workspace is not None:
+        try:
+            output_path.relative_to(workspace)
+        except ValueError as exc:
+            raise ValueError(
+                f"Ruta fuera del workspace permitido ({workspace}): {output_path}"
+            ) from exc
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image = pyautogui.screenshot()

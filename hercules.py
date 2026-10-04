@@ -47,6 +47,22 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+
+
+def _set_process_dpi_aware() -> None:
+    """Fija la conciencia DPI antes de inicializar Tkinter o PyAutoGUI."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+_set_process_dpi_aware()
+
 from tkinter import BooleanVar, Canvas, Frame, Label as TkLabel, Tk, StringVar, Text, Toplevel, colorchooser, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -2046,7 +2062,11 @@ def tool_get_current_time(_args: Dict[str, Any]) -> str:
 
 
 def tool_take_screenshot(args: Dict[str, Any]) -> str:
-    return computer_tools.take_screenshot(args.get("path"))
+    try:
+        path = _resolve_workspace_path(args.get("path", "")) if args.get("path") else None
+        return computer_tools.take_screenshot(path, workspace_dir=WORKSPACE_DIR)
+    except (OSError, ValueError) as exc:
+        return f"ERROR: {exc}"
 
 
 def tool_mouse_click(args: Dict[str, Any]) -> str:
@@ -2332,9 +2352,9 @@ class ToolsRegistry:
             ToolDefinition(
                 name="take_screenshot",
                 description=(
-                    "Captura la pantalla y guarda una imagen PNG. "
-                    "Argumento opcional: path (ruta de salida; por defecto, "
-                    "un archivo en el directorio actual)."
+                    "Captura la pantalla y guarda una imagen PNG dentro del workspace. "
+                    "Argumento opcional: path (ruta de salida relativa al workspace; "
+                    "por defecto, un archivo en la raíz del workspace)."
                 ),
                 risk=RiskLevel.CRITICAL,
                 parameters={
