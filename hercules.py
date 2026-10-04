@@ -4787,15 +4787,19 @@ def _win32_minimize(window: Any) -> bool:
         return False
 
 
-def _bring_to_front(window: Any) -> None:
+def _bring_to_front(window: Any, *, keep_on_top: bool = False) -> None:
     """Sube una ventana (incluida overrideredirect) al frente y le da foco."""
     try:
         window.update_idletasks()
-        window.lift()
         window.attributes("-topmost", True)
+        window.lift()
         window.focus_force()
-        # Se quita topmost tras mostrarse para no quedar sobre otras apps.
-        window.after(300, lambda: window.winfo_exists() and window.attributes("-topmost", False))
+        if not keep_on_top:
+            # Se quita topmost tras mostrarse para no quedar sobre otras apps.
+            window.after(
+                300,
+                lambda: window.winfo_exists() and window.attributes("-topmost", False),
+            )
     except Exception:  # noqa: BLE001
         pass
 
@@ -7571,9 +7575,9 @@ class ApprovalPopup:
       - Botones "✅ Permitir" y "❌ Cancelar".
       - Casilla "🤖 Preautorizar" (consulta al LLM antes de mostrar).
 
-    El popup NO usa ``grab_set()`` para permitir que el usuario siga
-    interactuando con el dashboard (revisar historial, seleccionar otra
-    tarea) mientras decide. Solo se cierra cuando el usuario resuelve la
+    El popup permanece encima de las demás ventanas y captura la entrada
+    mientras haya una autorización pendiente, para evitar que otra ventana
+    modal bloquee la respuesta. Solo se cierra cuando el usuario resuelve la
     solicitud o cuando el LLM la preautoriza/deniega automáticamente.
 
     Atajos de teclado:
@@ -7585,6 +7589,10 @@ class ApprovalPopup:
         self.dashboard = dashboard
         self.event = event
         self._resolved = False  # evita doble-resolución si el usuario hace doble clic
+        try:
+            self._previous_grab = dashboard.root.grab_current()
+        except Exception:  # noqa: BLE001
+            self._previous_grab = None
 
         self.window = Toplevel(dashboard.root)
         self.window.title("⚠ Autorización requerida")
@@ -7594,9 +7602,9 @@ class ApprovalPopup:
             self.window.configure(background=CONFIG.ui_bg_color)
         except Exception:  # noqa: BLE001
             pass
-        # Sin transient: una ventana con propietario se oculta al minimizar
-        # el dashboard y queda detrás al restaurarlo. Se mantiene topmost
-        # hasta resolverla. NO usamos grab_set() para no bloquear el dashboard.
+        # Sin transient para que no quede oculta al minimizar/restaurar el
+        # dashboard. Se mantiene topmost y captura la entrada hasta resolver
+        # la solicitud, incluso si había otro diálogo modal abierto.
         # Si el usuario cierra la ventana con la X, se trata como "Cancelar".
         self.window.protocol("WM_DELETE_WINDOW", self._on_deny)
 
@@ -7645,9 +7653,12 @@ class ApprovalPopup:
         # Atajos de teclado.
         self.window.bind("<Escape>", lambda _e: self._on_deny())
         self.window.bind("<Return>", lambda _e: self._on_allow())
-        _bring_to_front(self.window)
         try:
-            self.window.attributes("-topmost", True)
+            self.window.grab_set()
+        except Exception:  # noqa: BLE001
+            pass
+        _bring_to_front(self.window, keep_on_top=True)
+        try:
             # Si el dashboard se restaura, el popup vuelve al frente.
             dashboard.root.bind("<Map>", self._on_dashboard_map, add="+")
         except Exception:  # noqa: BLE001
@@ -7667,11 +7678,7 @@ class ApprovalPopup:
     def _on_dashboard_map(self, event: Any) -> None:
         if event.widget is not self.dashboard.root or self._resolved:
             return
-        try:
-            self.window.lift()
-            self.window.attributes("-topmost", True)
-        except Exception:  # noqa: BLE001
-            pass
+        _bring_to_front(self.window, keep_on_top=True)
 
     def _build_layout(self) -> None:
         """Construye los widgets del popup de autorización."""
@@ -7873,10 +7880,19 @@ class ApprovalPopup:
             self._close()
 
     def _close(self) -> None:
-        """Cierra la ventana del popup."""
+        """Cierra la ventana del popup y restaura la captura modal previa."""
         _TrayNotifier.remove()
         try:
+            self.window.grab_release()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
             self.window.destroy()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if self._previous_grab is not None and self._previous_grab.winfo_exists():
+                self._previous_grab.grab_set()
         except Exception:  # noqa: BLE001
             pass
 
