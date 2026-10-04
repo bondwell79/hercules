@@ -4793,7 +4793,8 @@ def _bring_to_front(window: Any, *, keep_on_top: bool = False) -> None:
         window.update_idletasks()
         window.attributes("-topmost", True)
         window.lift()
-        window.focus_force()
+        if not keep_on_top:
+            window.focus_force()
         if not keep_on_top:
             # Se quita topmost tras mostrarse para no quedar sobre otras apps.
             window.after(
@@ -7232,7 +7233,6 @@ class Dashboard:
             return
         popup = ApprovalPopup(self, event)
         self._current_approval_popup = popup
-        popup.window.focus_force()
 
     def _poll_pending_approval(self) -> None:
         """Espera a que se restaure la ventana principal para mostrar la solicitud pendiente."""
@@ -7358,9 +7358,11 @@ class Dashboard:
         """
         Abre una ventana Toplevel con el contenido del fichero seleccionado.
 
-        La ventana es modal respecto al dashboard (no se puede interactuar
-        con el dashboard mientras está abierta) y muestra la ruta completa
-        en el título junto con el nombre del fichero. El contenido se
+        La ventana muestra la ruta completa del fichero en el título junto
+        con su nombre y el contenido en un ScrolledText de solo lectura. No
+        captura globalmente la entrada, por lo que otra ventana en primer plano
+        conserva el foco.
+        El contenido se
         carga en un ScrolledText de solo lectura. Si el fichero es binario
         o no se puede decodificar como UTF-8, se muestra un aviso y los
         primeros bytes en hexadecimal.
@@ -7532,10 +7534,6 @@ class Dashboard:
         viewer.bind("<Escape>", lambda _e: viewer.destroy())
 
         _bring_to_front(viewer)
-        try:
-            viewer.grab_set()
-        except Exception:  # noqa: BLE001
-            pass
 
     def _open_settings(self) -> None:
         """Abre el popup de edición de config.ini."""
@@ -7575,10 +7573,11 @@ class ApprovalPopup:
       - Botones "✅ Permitir" y "❌ Cancelar".
       - Casilla "🤖 Preautorizar" (consulta al LLM antes de mostrar).
 
-    El popup permanece encima de las demás ventanas y captura la entrada
-    mientras haya una autorización pendiente, para evitar que otra ventana
-    modal bloquee la respuesta. Solo se cierra cuando el usuario resuelve la
-    solicitud o cuando el LLM la preautoriza/deniega automáticamente.
+    El popup permanece encima de las demás ventanas mientras haya una
+    autorización pendiente, sin capturar globalmente la entrada: el foco
+    sigue perteneciendo a la ventana que esté en primer plano. Solo se cierra
+    cuando el usuario resuelve la solicitud o cuando el LLM la preautoriza/
+    deniega automáticamente.
 
     Atajos de teclado:
       - Enter: Permitir
@@ -7589,10 +7588,6 @@ class ApprovalPopup:
         self.dashboard = dashboard
         self.event = event
         self._resolved = False  # evita doble-resolución si el usuario hace doble clic
-        try:
-            self._previous_grab = dashboard.root.grab_current()
-        except Exception:  # noqa: BLE001
-            self._previous_grab = None
 
         self.window = Toplevel(dashboard.root)
         self.window.title("⚠ Autorización requerida")
@@ -7603,8 +7598,8 @@ class ApprovalPopup:
         except Exception:  # noqa: BLE001
             pass
         # Sin transient para que no quede oculta al minimizar/restaurar el
-        # dashboard. Se mantiene topmost y captura la entrada hasta resolver
-        # la solicitud, incluso si había otro diálogo modal abierto.
+        # dashboard. Se mantiene topmost, pero no toma una captura global de
+        # entrada: el foco sigue la ventana activa del sistema.
         # Si el usuario cierra la ventana con la X, se trata como "Cancelar".
         self.window.protocol("WM_DELETE_WINDOW", self._on_deny)
 
@@ -7653,10 +7648,6 @@ class ApprovalPopup:
         # Atajos de teclado.
         self.window.bind("<Escape>", lambda _e: self._on_deny())
         self.window.bind("<Return>", lambda _e: self._on_allow())
-        try:
-            self.window.grab_set()
-        except Exception:  # noqa: BLE001
-            pass
         _bring_to_front(self.window, keep_on_top=True)
         try:
             # Si el dashboard se restaura, el popup vuelve al frente.
@@ -7880,19 +7871,10 @@ class ApprovalPopup:
             self._close()
 
     def _close(self) -> None:
-        """Cierra la ventana del popup y restaura la captura modal previa."""
+        """Cierra la ventana del popup de autorización."""
         _TrayNotifier.remove()
         try:
-            self.window.grab_release()
-        except Exception:  # noqa: BLE001
-            pass
-        try:
             self.window.destroy()
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            if self._previous_grab is not None and self._previous_grab.winfo_exists():
-                self._previous_grab.grab_set()
         except Exception:  # noqa: BLE001
             pass
 
@@ -8018,10 +8000,6 @@ class WelcomeDialog:
         # Una ventana overrideredirect no recibe foco ni z-order del WM:
         # hay que subirla explícitamente o queda tras el dashboard.
         _bring_to_front(self.window)
-        try:
-            self.window.grab_set()
-        except Exception:  # noqa: BLE001
-            pass
 
     def _build_layout(self) -> None:
         """Construye los widgets del popup de bienvenida."""
@@ -8171,10 +8149,6 @@ class WelcomeDialog:
                 _save_welcome_pref(False)
             except Exception as exc:  # noqa: BLE001
                 print(f"[welcome] No se pudo guardar la preferencia: {exc}")
-        try:
-            self.window.grab_release()
-        except Exception:  # noqa: BLE001
-            pass
         self.window.destroy()
 
 
@@ -8400,10 +8374,6 @@ class SettingsDialog:
         except Exception:  # noqa: BLE001
             pass
         _bring_to_front(self.window)
-        try:
-            self.window.grab_set()
-        except Exception:  # noqa: BLE001
-            pass
 
     # --- Construcción ---
 
@@ -8536,10 +8506,6 @@ class SettingsDialog:
         self._close()
 
     def _close(self) -> None:
-        try:
-            self.window.grab_release()
-        except Exception:  # noqa: BLE001
-            pass
         self.window.destroy()
 
 
