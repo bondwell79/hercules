@@ -6196,7 +6196,7 @@ class Dashboard:
                 prompt_container, text="\u2699", width=3, command=self._open_settings
             ).place(relx=1.0, x=0, y=0, anchor="ne")
 
-        ttk.Label(prompt_container, text="📝 Prompt de tarea a ejecutar:", style="Title.TLabel").pack(
+        ttk.Label(prompt_container, text="📝 Prompt de tarea a ejecutar:nui", style="Title.TLabel").pack(
             anchor="w"
         )
 
@@ -6316,6 +6316,18 @@ class Dashboard:
         ).pack(side="left")
         browser_btns = ttk.Frame(browser_header, style="Card.TFrame")
         browser_btns.pack(side="right")
+        RoundedButton(
+            browser_btns,
+            text="📂 Abrir en Explorador de sistema",
+            command=self._open_workspace_in_system_explorer,
+            bg=CONFIG.ui_button_bg,
+            fg=CONFIG.ui_button_fg,
+            hover_bg=CONFIG.ui_button_hover_bg,
+            pressed_bg=CONFIG.ui_button_pressed_bg,
+            radius=CONFIG.ui_corner_radius,
+            padding_x=12,
+            padding_y=4,
+        ).pack(side="left", padx=(0, 4))
         RoundedButton(
             browser_btns,
             text="⬆ Padre",
@@ -7668,6 +7680,22 @@ class Dashboard:
     def _open_settings(self) -> None:
         """Abre el popup de edición de config.ini."""
         SettingsDialog(self)
+
+    def _open_workspace_in_system_explorer(self) -> None:
+        """Abre la carpeta raíz del workspace en el explorador del sistema."""
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(WORKSPACE_DIR))
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(WORKSPACE_DIR)])
+            else:
+                subprocess.Popen(["xdg-open", str(WORKSPACE_DIR)])
+        except OSError as e:
+            messagebox.showerror(
+                "Error al abrir el explorador",
+                f"No se pudo abrir {WORKSPACE_DIR} en el explorador del sistema:\n{e}",
+                parent=self.root,
+            )
 
     def _on_browser_up(self) -> None:
         """Sube al directorio padre (sin salir del workspace)."""
