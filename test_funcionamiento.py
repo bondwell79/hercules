@@ -516,16 +516,16 @@ def test_two_sequential_tasks_run_in_parallel(tmp_dir: str, workspace: str) -> N
     )
 
 
-def test_two_tasks_with_critical_actions(tmp_dir: str, workspace: str) -> None:
+def test_two_tasks_with_safe_actions(tmp_dir: str, workspace: str) -> None:
     """
-    Verifica que dos tareas con acciones CRITICAL (que requieren
-    aprobación HITL) pueden ejecutarse en paralelo y ambas completarse.
+    Verifica que dos tareas con acciones SAFE pueden ejecutarse en paralelo
+    sin solicitar aprobaciones HITL.
     """
-    RESULTS.section("Dos tareas simultáneas con acciones CRITICAL (HITL)")
+    RESULTS.section("Dos tareas simultáneas con acciones SAFE")
 
     db = make_test_db(tmp_dir)
 
-    # Respuestas para tarea 1: tool_call CRITICAL (write_file) + final.
+    # Respuestas para tarea 1: tool_call SAFE (write_file) + final.
     responses_1 = [
         {
             "choices": [
@@ -560,7 +560,7 @@ def test_two_tasks_with_critical_actions(tmp_dir: str, workspace: str) -> None:
         },
     ]
 
-    # Respuestas para tarea 2: tool_call CRITICAL (write_file) + final.
+    # Respuestas para tarea 2: tool_call SAFE (write_file) + final.
     responses_2 = [
         {
             "choices": [
@@ -609,41 +609,41 @@ def test_two_tasks_with_critical_actions(tmp_dir: str, workspace: str) -> None:
 
     # Esperar a que ambas terminen.
     completed = wait_for_completion(db, [task_1.id, task_2.id], timeout=15.0)
-    assert_true(completed, "HITL paralelo: ambas tareas finalizan dentro del timeout")
+    assert_true(completed, "SAFE paralelo: ambas tareas finalizan dentro del timeout")
 
     final_1 = db.get_task(task_1.id)
     final_2 = db.get_task(task_2.id)
-    assert_eq(final_1.status, ga.TaskStatus.COMPLETED, "HITL paralelo: tarea 1 COMPLETED")
-    assert_eq(final_2.status, ga.TaskStatus.COMPLETED, "HITL paralelo: tarea 2 COMPLETED")
+    assert_eq(final_1.status, ga.TaskStatus.COMPLETED, "SAFE paralelo: tarea 1 COMPLETED")
+    assert_eq(final_2.status, ga.TaskStatus.COMPLETED, "SAFE paralelo: tarea 2 COMPLETED")
 
     # Verificar que ambos archivos se crearon en el workspace.
     assert_true(
         Path(workspace, "salida_t1.txt").exists(),
-        "HITL paralelo: archivo de tarea 1 creado en workspace",
+        "SAFE paralelo: archivo de tarea 1 creado en workspace",
     )
     assert_true(
         Path(workspace, "salida_t2.txt").exists(),
-        "HITL paralelo: archivo de tarea 2 creado en workspace",
+        "SAFE paralelo: archivo de tarea 2 creado en workspace",
     )
 
     # Verificar contenidos correctos.
     content_1 = Path(workspace, "salida_t1.txt").read_text(encoding="utf-8")
     content_2 = Path(workspace, "salida_t2.txt").read_text(encoding="utf-8")
-    assert_eq(content_1, "resultado tarea 1", "HITL paralelo: contenido de archivo tarea 1 correcto")
-    assert_eq(content_2, "resultado tarea 2", "HITL paralelo: contenido de archivo tarea 2 correcto")
+    assert_eq(content_1, "resultado tarea 1", "SAFE paralelo: contenido de archivo tarea 1 correcto")
+    assert_eq(content_2, "resultado tarea 2", "SAFE paralelo: contenido de archivo tarea 2 correcto")
 
     # Verificar que cada PermissionManager recibió la solicitud de SU tarea.
     requested_task_ids_1 = {tid for tid, _, _ in permissions_1.requests}
     requested_task_ids_2 = {tid for tid, _, _ in permissions_2.requests}
-    assert_true(
-        task_1.id in requested_task_ids_1,
-        "HITL paralelo: PermissionManager de tarea 1 recibió solicitud de tarea 1",
-        f"task_ids solicitados={requested_task_ids_1}",
+    assert_eq(
+        requested_task_ids_1,
+        set(),
+        "SAFE paralelo: acción de tarea 1 no solicitó aprobación HITL",
     )
-    assert_true(
-        task_2.id in requested_task_ids_2,
-        "HITL paralelo: PermissionManager de tarea 2 recibió solicitud de tarea 2",
-        f"task_ids solicitados={requested_task_ids_2}",
+    assert_eq(
+        requested_task_ids_2,
+        set(),
+        "SAFE paralelo: acción de tarea 2 no solicitó aprobación HITL",
     )
 
 
@@ -741,7 +741,7 @@ def main() -> int:
 
     try:
         test_two_sequential_tasks_run_in_parallel(tmp_dir, workspace)
-        test_two_tasks_with_critical_actions(tmp_dir, workspace)
+        test_two_tasks_with_safe_actions(tmp_dir, workspace)
         test_three_sequential_tasks(tmp_dir, workspace)
     finally:
         teardown_test_env(tmp_dir)

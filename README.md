@@ -20,47 +20,31 @@
 ## ✨ Características
 
 - 🤖 **Agente** con bucle de razonamiento y herramientas.
-- 🖱️ **Herramientas de escritorio**: la captura de pantalla (`take_screenshot`) no requiere aprobación; los clics y movimientos del ratón sí requieren autorización humana. La captura se adjunta como imagen multimodal en la siguiente petición al modelo, limitada a 4 MB (si el proveedor/modelo admite imágenes). Las capturas PNG que superan ese límite se comprimen y convierten a JPEG para el envío.
-- 🎼 **Descomposición automática en subtareas:** cada tarea se divide en Requisitos → Desarrollo → Ejecución/Verificación → Rectificación (si falla, hasta `max_rectification_retries` intentos). Las plantillas de prompt se editan en `subtareas.ini`.
-- 🛡️ **Human-in-the-Loop (HITL):** aprobación manual de acciones críticas mediante popups modales, con preautorización opcional por el propio LLM y análisis de seguridad de comandos.
-- 🪟 **Barra de título moderna** en Windows 10/11 (DWM): estilos `system`, `dark`, `accent` y `custom`.
+- 🖱️ **Herramientas **: soporta las herramientas estandar de llm: 
+
+Tool	            Nivel	Descripción
+read_file	        SAFE	Lee un archivo de texto del workspace.
+read_binary_file	SAFE	Lee un archivo binario y devuelve su contenido en Base64, hasta 50 000 bytes.
+read_binary_hex	    SAFE	Muestra un rango de un archivo binario como volcado hexadecimal y ASCII; admite hasta 4096 bytes.
+list_directory	    SAFE	Lista los archivos y subdirectorios de una carpeta del workspace.
+search_files	    SAFE	Busca archivos por patrón glob, por ejemplo *.txt.
+get_current_time	SAFE	Devuelve la fecha y hora UTC actuales.
+take_screenshot	    SAFE	Captura la pantalla y guarda la imagen PNG en el workspace.
+mouse_click	        SAFE	Hace uno o más clics en unas coordenadas de pantalla.
+mouse_move	        SAFE	Mueve el puntero a unas coordenadas de pantalla.
+write_file	        SAFE	Escribe contenido en un archivo; puede sobrescribir uno existente.
+create_file	        SAFE	Crea un archivo nuevo sin sobrescribir uno existente.
+edit_file	        SAFE	Reemplaza una coincidencia de texto en un archivo; también puede sustituir todo su contenido.
+search_in_files	    SAFE	Busca una cadena literal dentro de archivos del workspace.
+execute_command	    CRITICAL	Ejecuta un comando del sistema desde el workspace; requiere aprobación y aplica comprobaciones de seguridad.
+delete_file	        SAFE	Elimina un archivo o directorio del workspace.
+
+- 🛡️ **Human-in-the-Loop (HITL):** las herramientas `write_file`, `create_file`, `edit_file` y `delete_file` están limitadas al workspace y se clasifican como SAFE; las acciones CRITICAL, como ejecutar comandos, requieren aprobación manual mediante popups modales. Incluye preautorización opcional por el LLM y análisis de seguridad de comandos.
 - 🔌 **Modo dual LLM:** local (GGUF con `llama-cpp-python`) o HTTP (OpenAI/Ollama/llama.cpp server).
-- 📊 **Dashboard tkinter** con 4 zonas: prompt, tablero de tareas, historial y panel de aprobación.
-- 💾 **Persistencia SQLite** historial de tareas realizadas.
-- 📦 **Ejecutable autónomo** compilable con Nuitka (cero instalación en el destino), con icono propio de Hercules.
 
 ## 🎨 Interfaz moderna
 
-La interfaz gráfica ha sido rediseñada con un aspecto moderno y personalizable:
-
-- **Esquinas redondeadas** en marcos, tarjetas, botones y barras de progreso (widgets `RoundedFrame`, `RoundedButton` y `GradientCanvas`).
-- **Bordes sutiles** en las tarjetas para separarlas visualmente del fondo.
-- **Efectos hover y pressed** en los botones: cambian de color al pasar el ratón por encima y al hacer clic, con una animación suave de transición.
-- **Transparencia de la ventana** configurable (rango 0.5 - 1.0) mediante el atributo `-alpha` de tkinter.
-- **Color de acento** para títulos y cabeceras, configurable desde `config.ini`.
-- **Botón "Ejecutar" destacado** con color de acento (azul) para diferenciarlo de los botones secundarios; permanece deshabilitado junto al prompt mientras se procesa toda la cola de tareas.
-- **Botón "Abortar tareas"** junto a "Ejecutar" para cancelar la ejecución en curso.
-- **Botón "Denegar/Cancelar" en rojo** y **"Permitir" en verde** para identificar visualmente las acciones críticas del panel HITL.
-
-Todas estas opciones se configuran en la sección `[UI]` de `config.ini`:
-
-| Clave | Descripción | Valor por defecto |
-|---|---|---|
-| `corner_radius` | Radio de las esquinas redondeadas (px) | `10` |
-| `card_border_width` | Grosor del borde de las tarjetas (px) | `1` |
-| `card_border_color` | Color del borde de las tarjetas | `#3c3c3c` |
-| `accent_color` | Color de acento para títulos | `#4fc3f7` |
-| `window_alpha` | Transparencia de la ventana (0.5 - 1.0) | `1.0` |
-| `button_accent_bg` | Color base del botón "Ejecutar" | `#007acc` |
-| `button_accent_hover_bg` | Color hover del botón "Ejecutar" | `#1a8ad8` |
-| `button_accent_pressed_bg` | Color pressed del botón "Ejecutar" | `#005a9e` |
-| `button_hover_bg` | Color hover de botones secundarios | `#505050` |
-| `button_pressed_bg` | Color pressed de botones secundarios | `#2a2a2a` |
-| `button_danger_bg` | Color base del botón "Denegar" | `#d32f2f` |
-| `button_danger_hover_bg` | Color hover del botón "Denegar" | `#e53935` |
-| `button_danger_pressed_bg` | Color pressed del botón "Denegar" | `#b71c1c` |
-
-> Para desactivar las esquinas redondeadas y volver al aspecto clásico, basta con poner `corner_radius = 0` en `config.ini`.
+La interfaz gráfica ha sido rediseñada con un aspecto moderno y personalizable.
 
 ## 📦 Requisitos
 

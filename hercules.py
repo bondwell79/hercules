@@ -78,7 +78,7 @@ import computer_tools
 # ============================================================================
 
 CONFIG_PATH = os.environ.get("HERCULES_CONFIG", "config.ini")
-VERSION = "Alpha 0.3.0"
+VERSION = "1.50"
 SUBTAREAS_INI_PATH = os.environ.get("HERCULES_SUBTAREAS_INI", "subtareas.ini")
 
 # Patrones peligrosos organizados por categoría.
@@ -2093,6 +2093,55 @@ def tool_read_file(args: Dict[str, Any]) -> str:
     return content
 
 
+def tool_read_binary_file(args: Dict[str, Any]) -> str:
+    path = _resolve_workspace_path(args.get("path", ""))
+    if not path.exists():
+        return f"ERROR: el archivo no existe: {path}"
+    if not path.is_file():
+        return f"ERROR: no es un archivo: {path}"
+    try:
+        with path.open("rb") as file:
+            content = file.read(50_001)
+    except Exception as e:  # noqa: BLE001
+        return f"ERROR al leer {path}: {e}"
+    truncated = len(content) > 50_000
+    content = content[:50_000]
+    result = f"Base64 ({len(content)} bytes): {base64.b64encode(content).decode('ascii')}"
+    if truncated:
+        result += "\n... [truncado a 50000 bytes]"
+    return result
+
+
+def tool_read_binary_hex(args: Dict[str, Any]) -> str:
+    path = _resolve_workspace_path(args.get("path", ""))
+    offset = args.get("offset", 0)
+    length = args.get("length", 256)
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+        return "ERROR: 'offset' debe ser un entero no negativo"
+    if isinstance(length, bool) or not isinstance(length, int) or length < 0:
+        return "ERROR: 'length' debe ser un entero no negativo"
+    if length > 4096:
+        return "ERROR: 'length' no puede superar 4096 bytes"
+    if not path.exists():
+        return f"ERROR: el archivo no existe: {path}"
+    if not path.is_file():
+        return f"ERROR: no es un archivo: {path}"
+    try:
+        with path.open("rb") as file:
+            file.seek(offset)
+            content = file.read(length)
+    except Exception as e:  # noqa: BLE001
+        return f"ERROR al leer {path}: {e}"
+
+    lines = []
+    for row_offset in range(0, len(content), 16):
+        row = content[row_offset : row_offset + 16]
+        hex_bytes = " ".join(f"{byte:02x}" for byte in row)
+        ascii_bytes = "".join(chr(byte) if 32 <= byte < 127 else "." for byte in row)
+        lines.append(f"{offset + row_offset:08x}  {hex_bytes:<47}  |{ascii_bytes}|")
+    return "\n".join(lines) if lines else "(sin datos en el rango solicitado)"
+
+
 def tool_list_directory(args: Dict[str, Any]) -> str:
     path = _resolve_workspace_path(args.get("path", "."))
     if not path.exists():
@@ -2315,6 +2364,8 @@ def tool_execute_command(args: Dict[str, Any]) -> str:
             cwd=str(WORKSPACE_DIR),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=COMMAND_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
@@ -2372,6 +2423,59 @@ class ToolsRegistry:
                     "required": ["path"],
                 },
                 runner=tool_read_file,
+            )
+        )
+        self.register(
+            ToolDefinition(
+                name="read_binary_file",
+                description=(
+                    "Lee un archivo binario del workspace y devuelve su contenido codificado en Base64 "
+                    "(máximo 50000 bytes). Argumentos: path (ruta del archivo)."
+                ),
+                risk=RiskLevel.SAFE,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Ruta del archivo binario a leer.",
+                        }
+                    },
+                    "required": ["path"],
+                },
+                runner=tool_read_binary_file,
+            )
+        )
+        self.register(
+            ToolDefinition(
+                name="read_binary_hex",
+                description=(
+                    "Lee un rango de un archivo binario y lo muestra como volcado hexadecimal con ASCII. "
+                    "Argumentos: path, offset (opcional, por defecto 0), length (opcional, por defecto 256; máximo 4096)."
+                ),
+                risk=RiskLevel.SAFE,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Ruta del archivo binario a leer.",
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Posición inicial en bytes.",
+                        },
+                        "length": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 4096,
+                            "description": "Cantidad máxima de bytes a leer.",
+                        },
+                    },
+                    "required": ["path"],
+                },
+                runner=tool_read_binary_hex,
             )
         )
         self.register(
@@ -2510,7 +2614,7 @@ class ToolsRegistry:
                     "Escribe contenido en un archivo del workspace (crea "
                     "directorios si no existen). Argumentos: path, content."
                 ),
-                risk=RiskLevel.CRITICAL,
+                risk=RiskLevel.SAFE,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -2535,7 +2639,7 @@ class ToolsRegistry:
                     "Crea un archivo nuevo dentro del workspace sin sobrescribir uno existente. "
                     "Argumentos: path, content (obligatorio)."
                 ),
-                risk=RiskLevel.CRITICAL,
+                risk=RiskLevel.SAFE,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -2555,7 +2659,7 @@ class ToolsRegistry:
                     "si old_text está vacío, sustituye todo el contenido. "
                     "Argumentos: path, old_text, new_text."
                 ),
-                risk=RiskLevel.CRITICAL,
+                risk=RiskLevel.SAFE,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -2616,7 +2720,7 @@ class ToolsRegistry:
                     "Elimina un archivo o directorio del workspace. "
                     "Argumentos: path."
                 ),
-                risk=RiskLevel.CRITICAL,
+                risk=RiskLevel.SAFE,
                 parameters={
                     "type": "object",
                     "properties": {
@@ -2824,7 +2928,9 @@ class LoopDetector:
 SYSTEM_PROMPT = """Eres un agente autónomo con acceso a HERRAMIENTAS (tools/functions). Tienes permiso y DEBES usarlas cuando la tarea lo requiera.
 
 HERRAMIENTAS DISPONIBLES:
-- read_file(path): Lee el contenido de un archivo del workspace.
+- read_file(path): Lee el contenido de texto de un archivo del workspace.
+- read_binary_file(path): Lee un archivo binario y devuelve su contenido en Base64 (máximo 50000 bytes).
+- read_binary_hex(path, offset, length): Muestra un rango de un archivo binario como volcado hexadecimal con ASCII.
 - create_file(path, content): Crea un archivo nuevo sin sobrescribir uno existente.
 - edit_file(path, old_text, new_text): Reemplaza una coincidencia exacta; si old_text está vacío, sustituye todo el contenido.
 - search_in_files(query, path, file_pattern): Busca texto literal dentro de archivos.
@@ -4476,6 +4582,7 @@ class RoundedButton:
     ) -> None:
         self._bg = bg or CONFIG.ui_button_bg
         self._fg = fg or CONFIG.ui_button_fg
+        self._disabled_bg = CONFIG.ui_status_cancelled
         self._hover_bg = hover_bg or CONFIG.ui_button_hover_bg
         self._pressed_bg = pressed_bg or CONFIG.ui_button_pressed_bg
         self._radius = CONFIG.ui_corner_radius if radius is None else max(0, int(radius))
@@ -4486,7 +4593,7 @@ class RoundedButton:
         self._padding_y = max(0, int(padding_y))
         self._anim_ms = CONFIG.ui_hover_animation_ms
         self._anim_after_id: Optional[str] = None
-        self._current_color = self._bg
+        self._current_color = self._disabled_bg if self._disabled else self._bg
 
         self.canvas = Canvas(
             parent,
@@ -4554,7 +4661,7 @@ class RoundedButton:
                 self.canvas.unbind("<FocusIn>")
                 self.canvas.unbind("<FocusOut>")
                 self.canvas.configure(cursor="arrow")
-                self._animate_to(self._bg)
+                self._animate_to(self._disabled_bg)
             else:
                 self.canvas.bind("<Enter>", self._on_enter)
                 self.canvas.bind("<Leave>", self._on_leave)
@@ -4565,9 +4672,10 @@ class RoundedButton:
                 self.canvas.bind("<FocusIn>", self._on_focus_in)
                 self.canvas.bind("<FocusOut>", self._on_focus_out)
                 self.canvas.configure(cursor="hand2")
+                self._animate_to(self._bg)
         if "bg" in kwargs:
             self._bg = kwargs["bg"]
-            self._animate_to(self._bg)
+            self._animate_to(self._disabled_bg if self._disabled else self._bg)
         if "fg" in kwargs:
             self._fg = kwargs["fg"]
             self.canvas.itemconfigure(self._text_id, fill=self._fg)
@@ -6088,7 +6196,7 @@ class Dashboard:
                 prompt_container, text="\u2699", width=3, command=self._open_settings
             ).place(relx=1.0, x=0, y=0, anchor="ne")
 
-        ttk.Label(prompt_container, text="📝 Nueva instrucción para el agente", style="Title.TLabel").pack(
+        ttk.Label(prompt_container, text="📝 Prompt de tarea a ejecutar:", style="Title.TLabel").pack(
             anchor="w"
         )
 
@@ -7933,7 +8041,6 @@ class WelcomeDialog:
     DEVELOPER_NAME = "Rubén Pastor"
     GITHUB_URL = "https://github.com/bondwell79/hercules"
     GITHUB_DISPLAY = "github.com/bondwell79/hercules"
-    VERSION_PN = "1.0"
 
     ASCII_ART = r"""
 ██╗  ██╗███████╗██████╗  ██████╗██╗   ██╗██╗     ███████╗███████╗
@@ -7949,7 +8056,7 @@ class WelcomeDialog:
         self.dont_show_again = BooleanVar(value=False)
 
         self.window = Toplevel(parent)
-        self.window.title(f"Bienvenido a Hercules {self.VERSION_PN}")
+        self.window.title(f"Bienvenido a Hercules {VERSION}")
         self.window.resizable(False, False)
         # Colores coherentes con el dashboard.
         try:
@@ -7977,7 +8084,7 @@ class WelcomeDialog:
             try:
                 self.title_bar = CustomTitleBar(
                     self.window,
-                    title=f"Bienvenido a Hercules {self.VERSION_PN}",
+                    title=f"Bienvenido a Hercules {VERSION}",
                     icon="👋",
                     bg=CONFIG.ui_titlebar_color,
                     fg=CONFIG.ui_titlebar_text_color,

@@ -583,40 +583,35 @@ def test_execute_tool_call(tmp_dir: str, workspace: str) -> None:
         f"output={result.output!r}",
     )
 
-    # 5. Herramienta CRITICAL aprobada.
+    # 5. write_file es SAFE: se ejecuta sin solicitar permiso.
     call = ga.ToolCall(
         id="c5",
         name="write_file",
         arguments={"path": "nuevo.txt", "content": "hola"},
     )
     result = agent._execute_tool_call(task_id, call)
-    assert_eq(result.success, True, "execute: write_file aprobado -> success=True")
+    assert_eq(result.success, True, "execute: write_file SAFE -> success=True")
     assert_true(
         Path(workspace, "nuevo.txt").exists(),
         "execute: archivo creado en workspace",
     )
 
-    # 6. Herramienta CRITICAL denegada.
+    # 6. delete_file también es SAFE y no requiere permiso.
     permissions.grant = False
+    delete_target = Path(workspace, "eliminar.txt")
+    delete_target.write_text("borrar", encoding="utf-8")
     call = ga.ToolCall(
         id="c6",
         name="delete_file",
-        arguments={"path": "existente.txt"},
+        arguments={"path": "eliminar.txt"},
     )
     result = agent._execute_tool_call(task_id, call)
-    assert_eq(result.success, False, "execute: delete_file denegado -> success=False")
-    assert_true(
-        "DENEGADO" in result.output,
-        "execute: mensaje DENEGADO",
-        f"output={result.output!r}",
-    )
-    assert_true(
-        Path(workspace, "existente.txt").exists(),
-        "execute: archivo NO eliminado tras denegación",
-    )
+    assert_eq(result.success, True, "execute: delete_file SAFE -> success=True")
+    assert_true(not delete_target.exists(), "execute: delete_file SAFE se ejecuta")
+    assert_eq(len(permissions.requests), 0, "execute: herramientas SAFE no solicitan permiso")
     permissions.grant = True
 
-    # 7. Herramienta CRITICAL con argumentos inválidos (ruta fuera del workspace).
+    # 7. Herramienta SAFE con argumentos inválidos (ruta fuera del workspace).
     call = ga.ToolCall(
         id="c7",
         name="write_file",
@@ -630,7 +625,7 @@ def test_execute_tool_call(tmp_dir: str, workspace: str) -> None:
         f"output={result.output!r}",
     )
 
-    # 8. Herramienta CRITICAL con argumentos vacíos.
+    # 8. Herramienta SAFE con argumentos vacíos.
     call = ga.ToolCall(id="c8", name="write_file", arguments={})
     result = agent._execute_tool_call(task_id, call)
     assert_eq(result.success, False, "execute: write_file sin args -> success=False")
@@ -1020,11 +1015,11 @@ def test_agent_run_with_bad_responses(tmp_dir: str, workspace: str) -> None:
                         "content": None,
                         "tool_calls": [
                             {
-                                "id": "call_del",
+                                "id": "call_command",
                                 "type": "function",
                                 "function": {
-                                    "name": "delete_file",
-                                    "arguments": json.dumps({"path": "existente.txt"}),
+                                    "name": "execute_command",
+                                    "arguments": json.dumps({"command": "echo denied > denied.txt"}),
                                 },
                             }
                         ],
@@ -1049,9 +1044,10 @@ def test_agent_run_with_bad_responses(tmp_dir: str, workspace: str) -> None:
     agent.run(task)
     final = db.get_task(task.id)
     assert_eq(final.status, ga.TaskStatus.COMPLETED, "agent: permiso denegado -> COMPLETED")
+    assert_eq(len(permissions_deny.requests), 1, "agent: acción CRITICAL solicita permiso")
     assert_true(
-        Path(workspace, "existente.txt").exists(),
-        "agent: archivo NO eliminado tras denegación",
+        not Path(workspace, "denied.txt").exists(),
+        "agent: comando CRITICAL no ejecutado tras denegación",
     )
 
     # Escenario 10: modelo devuelve tool_call con nombre vacío.

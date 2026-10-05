@@ -52,12 +52,15 @@ try:
     assert btn.canvas.itemcget(btn._text_id, "text") == "Updated Text", "Text not updated"
     print("OK: RoundedButton.configure(text=...) works")
 
+    btn._anim_ms = 0
     btn.configure(state="disabled")
     assert btn._disabled == True, "Disabled state not set"
+    assert btn._current_color == btn._disabled_bg, "Disabled button color not applied"
     print("OK: RoundedButton.configure(state='disabled') works")
 
     btn.configure(state="normal")
     assert btn._disabled == False, "Normal state not set"
+    assert btn._current_color == btn._bg, "Normal button color not restored"
     print("OK: RoundedButton.configure(state='normal') works")
 
     # Test GradientCanvas

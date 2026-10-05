@@ -31,18 +31,20 @@ class ToolTests(unittest.TestCase):
     def test_registry_includes_every_tool_and_correct_risk(self) -> None:
         expected_risks = {
             "read_file": hercules.RiskLevel.SAFE,
+            "read_binary_file": hercules.RiskLevel.SAFE,
+            "read_binary_hex": hercules.RiskLevel.SAFE,
             "list_directory": hercules.RiskLevel.SAFE,
             "search_files": hercules.RiskLevel.SAFE,
             "get_current_time": hercules.RiskLevel.SAFE,
             "take_screenshot": hercules.RiskLevel.SAFE,
             "mouse_click": hercules.RiskLevel.SAFE,
             "mouse_move": hercules.RiskLevel.SAFE,
-            "write_file": hercules.RiskLevel.CRITICAL,
-            "create_file": hercules.RiskLevel.CRITICAL,
-            "edit_file": hercules.RiskLevel.CRITICAL,
+            "write_file": hercules.RiskLevel.SAFE,
+            "create_file": hercules.RiskLevel.SAFE,
+            "edit_file": hercules.RiskLevel.SAFE,
             "search_in_files": hercules.RiskLevel.SAFE,
             "execute_command": hercules.RiskLevel.CRITICAL,
-            "delete_file": hercules.RiskLevel.CRITICAL,
+            "delete_file": hercules.RiskLevel.SAFE,
         }
         tools = {tool.name: tool for tool in hercules.ToolsRegistry().all()}
 
@@ -55,6 +57,24 @@ class ToolTests(unittest.TestCase):
     def test_read_file(self) -> None:
         self.assertEqual(hercules.tool_read_file({"path": "sample.txt"}), "alpha\nbeta alpha\n")
         self.assertIn("no existe", hercules.tool_read_file({"path": "missing.txt"}))
+
+    def test_read_binary_file_returns_base64(self) -> None:
+        (self.workspace / "sample.bin").write_bytes(b"\x00\xffbinary")
+        result = hercules.tool_read_binary_file({"path": "sample.bin"})
+        self.assertEqual(result, "Base64 (8 bytes): AP9iaW5hcnk=")
+        self.assertIn("no existe", hercules.tool_read_binary_file({"path": "missing.bin"}))
+
+    def test_read_binary_hex_supports_offset_and_length(self) -> None:
+        (self.workspace / "sample.bin").write_bytes(b"\x00ABCD\xff")
+        result = hercules.tool_read_binary_hex(
+            {"path": "sample.bin", "offset": 1, "length": 4}
+        )
+        self.assertEqual(result, "00000001  41 42 43 44                                      |ABCD|")
+        self.assertEqual(
+            hercules.tool_read_binary_hex({"path": "sample.bin", "offset": 7, "length": 8}),
+            "(sin datos en el rango solicitado)",
+        )
+        self.assertIn("no puede superar", hercules.tool_read_binary_hex({"path": "sample.bin", "length": 4097}))
 
     def test_list_directory(self) -> None:
         listing = hercules.tool_list_directory({"path": "."})

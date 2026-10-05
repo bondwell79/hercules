@@ -110,9 +110,6 @@ def run_suite(path: Path, name: str, verbose: bool) -> SuiteResult:
             [sys.executable, str(path)],
             cwd=str(SCRIPT_DIR),
             capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
             env=env,
             timeout=600,  # 10 minutos de tope por suite
         )
@@ -122,18 +119,24 @@ def run_suite(path: Path, name: str, verbose: bool) -> SuiteResult:
             path=path,
             returncode=completed.returncode,
             duration=duration,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
+            stdout=completed.stdout.decode("utf-8", errors="replace"),
+            stderr=completed.stderr.decode("utf-8", errors="replace"),
         )
     except subprocess.TimeoutExpired as e:
         duration = time.monotonic() - start
+        stdout = e.stdout or b""
+        stderr = e.stderr or b""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8", errors="replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", errors="replace")
         return SuiteResult(
             name=name,
             path=path,
             returncode=-2,
             duration=duration,
-            stdout=e.stdout or "",
-            stderr=(e.stderr or "") + "\n[test_global] TIMEOUT: la suite excedió el tiempo máximo.",
+            stdout=stdout,
+            stderr=stderr + "\n[test_global] TIMEOUT: la suite excedió el tiempo máximo.",
         )
     except Exception as e:
         duration = time.monotonic() - start
