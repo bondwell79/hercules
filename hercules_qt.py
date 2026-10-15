@@ -14,9 +14,13 @@ from PySide6.QtCore import QTimer, QUrl, Qt
 from PySide6.QtGui import (
     QAction,
     QColor,
+    QConicalGradient,
     QDesktopServices,
     QFont,
     QKeySequence,
+    QPainter,
+    QPainterPath,
+    QPen,
     QShortcut,
     QTextCharFormat,
     QTextCursor,
@@ -356,6 +360,50 @@ class SettingsDialog(QDialog):
         self.accept()
 
 
+class AnimatedProgressBar(QProgressBar):
+    """Progress bar with a moving gradient border while a task is running."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._generating = False
+        self._gradient_offset = 0.0
+        self._gradient_timer = QTimer(self)
+        self._gradient_timer.setInterval(35)
+        self._gradient_timer.timeout.connect(self._advance_gradient)
+
+    def set_generating(self, generating: bool) -> None:
+        if self._generating == generating:
+            return
+        self._generating = generating
+        if generating:
+            self._gradient_timer.start()
+        else:
+            self._gradient_timer.stop()
+        self.update()
+
+    def _advance_gradient(self) -> None:
+        self._gradient_offset = (self._gradient_offset + 0.015) % 1.0
+        self.update()
+
+    def paintEvent(self, event: Any) -> None:
+        super().paintEvent(event)
+        if not self._generating:
+            return
+
+        rect = self.rect().adjusted(1, 1, -1, -1)
+        path = QPainterPath()
+        path.addRoundedRect(rect, 5, 5)
+        gradient = QConicalGradient(rect.center(), self._gradient_offset * 360)
+        gradient.setColorAt(0.0, QColor("#00d4ff"))
+        gradient.setColorAt(0.5, QColor("#b44cff"))
+        gradient.setColorAt(1.0, QColor("#00d4ff"))
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(gradient, 3))
+        painter.drawPath(path)
+
+
 class QtDashboard(QMainWindow):
     POLL_INTERVAL_MS = 200
     TASK_REFRESH_INTERVAL_MS = 1000
@@ -487,7 +535,7 @@ class QtDashboard(QMainWindow):
         status_layout = QHBoxLayout(status)
         status_layout.setContentsMargins(10, 4, 10, 6)
         status_layout.addWidget(QLabel("Contexto:", status))
-        self.context_bar = QProgressBar(status)
+        self.context_bar = AnimatedProgressBar(status)
         self.context_bar.setRange(0, 100)
         self.context_bar.setValue(0)
         self.context_bar.setFormat("0% (0/0 tokens)")
@@ -875,6 +923,7 @@ class QtDashboard(QMainWindow):
         self._active_task_cancel_event = cancel_event
         self.execute_button.setEnabled(False)
         self.abort_button.setEnabled(True)
+        self.context_bar.set_generating(True)
 
         def run_task() -> None:
             try:
@@ -903,6 +952,7 @@ class QtDashboard(QMainWindow):
         self._active_task_thread = None
         self.execute_button.setEnabled(True)
         self.abort_button.setEnabled(False)
+        self.context_bar.set_generating(False)
         self._refresh_task_lists()
 
     def _delete_finished_tasks(self) -> None:
