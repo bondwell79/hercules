@@ -188,7 +188,6 @@ class Config:
         "Agent": {
             "max_iterations": "10",
             "loop_threshold": "5",
-            "max_rectification_retries": "3",
             "context_compact_threshold": "80",
             "preauth_timeout": "15",
             "preauth_fallback_to_human": "true",
@@ -403,13 +402,6 @@ class Config:
         if env_val:
             return int(env_val)
         return self._parser.getint("Agent", "loop_threshold")
-
-    @property
-    def max_rectification_retries(self) -> int:
-        env_val = os.environ.get("HERCULES_MAX_RECTIFICATION_RETRIES")
-        if env_val:
-            return int(env_val)
-        return self._parser.getint("Agent", "max_rectification_retries")
 
     @property
     def context_compact_threshold(self) -> int:
@@ -921,7 +913,6 @@ CONFIG = Config()
 DB_PATH = CONFIG.db_path
 MAX_ITERATIONS = CONFIG.max_iterations
 LOOP_THRESHOLD = CONFIG.loop_threshold
-MAX_RECTIFICATION_RETRIES = CONFIG.max_rectification_retries
 CONTEXT_COMPACT_THRESHOLD = CONFIG.context_compact_threshold
 LLM_MODE = CONFIG.llm_mode
 LLM_BASE_URL = CONFIG.llm_base_url
@@ -1045,50 +1036,6 @@ class EventType(str, Enum):
     PREAUTHORIZATION_DENIED = "preauthorization_denied"
 
 
-class SubtaskType(str, Enum):
-    """
-    Tipos de subtarea dentro del flujo de descomposición.
-
-    Flujo normal:
-        REQUIREMENTS -> DEVELOPMENT -> EXECUTION_VERIFICATION
-
-    Si EXECUTION_VERIFICATION falla, se inserta:
-        RECTIFICATION -> EXECUTION_VERIFICATION (reintento)
-
-    El ciclo se repite hasta que la verificación sea exitosa o se
-    alcance ``max_rectification_retries``.
-    """
-    REQUIREMENTS = "REQUIREMENTS"
-    DEVELOPMENT = "DEVELOPMENT"
-    EXECUTION_VERIFICATION = "EXECUTION_VERIFICATION"
-    RECTIFICATION = "RECTIFICATION"
-
-    @property
-    def label(self) -> str:
-        """Etiqueta legible para mostrar en la UI."""
-        return _SUBTASK_LABELS.get(self, self.value)
-
-    @property
-    def icon(self) -> str:
-        """Icono representativo para el tablero."""
-        return _SUBTASK_ICONS.get(self, "•")
-
-
-_SUBTASK_LABELS: Dict[SubtaskType, str] = {
-    SubtaskType.REQUIREMENTS: "Requisitos técnicos",
-    SubtaskType.DEVELOPMENT: "Desarrollo de la solución",
-    SubtaskType.EXECUTION_VERIFICATION: "Ejecución y comprobación",
-    SubtaskType.RECTIFICATION: "Rectificación de la solución",
-}
-
-_SUBTASK_ICONS: Dict[SubtaskType, str] = {
-    SubtaskType.REQUIREMENTS: "📋",
-    SubtaskType.DEVELOPMENT: "🛠",
-    SubtaskType.EXECUTION_VERIFICATION: "✅",
-    SubtaskType.RECTIFICATION: "🔧",
-}
-
-
 # ============================================================================
 # MODELOS DE DATOS
 # ============================================================================
@@ -1105,8 +1052,8 @@ class Task:
     final_answer: Optional[str] = None
     # --- Descomposición en subtareas ---
     parent_task_id: Optional[int] = None
-    subtask_type: Optional[SubtaskType] = None
     attempt_number: int = 0
+    subtask_name: Optional[str] = None
 
 
 @dataclass
@@ -1230,8 +1177,8 @@ class Database:
                     updated_at      TEXT    NOT NULL,
                     final_answer    TEXT,
                     parent_task_id  INTEGER,
-                    subtask_type    TEXT,
                     attempt_number  INTEGER NOT NULL DEFAULT 0,
+                    subtask_name    TEXT,
                     FOREIGN KEY (parent_task_id) REFERENCES tasks(id) ON DELETE CASCADE
                 );
 
@@ -1253,10 +1200,10 @@ class Database:
             # las añadimos ahora. SQLite no soporta IF NOT EXISTS en ALTER TABLE
             # para columnas, así que comprobamos antes con PRAGMA.
             self._migrate_add_column_if_missing(conn, "tasks", "parent_task_id", "INTEGER")
-            self._migrate_add_column_if_missing(conn, "tasks", "subtask_type", "TEXT")
             self._migrate_add_column_if_missing(
                 conn, "tasks", "attempt_number", "INTEGER NOT NULL DEFAULT 0"
             )
+            self._migrate_add_column_if_missing(conn, "tasks", "subtask_name", "TEXT")
 
     @staticmethod
     def _migrate_add_column_if_missing(
@@ -1278,15 +1225,15 @@ class Database:
         title: str,
         prompt: str,
         parent_task_id: Optional[int] = None,
-        subtask_type: Optional[SubtaskType] = None,
         attempt_number: int = 0,
+        subtask_name: Optional[str] = None,
     ) -> Task:
         now = datetime.now(UTC).isoformat(timespec="seconds")
         with self._lock, self._connect() as conn:
             cur = conn.execute(
                 "INSERT INTO tasks "
                 "(title, prompt, status, created_at, updated_at, "
-                " parent_task_id, subtask_type, attempt_number) "
+                " parent_task_id, attempt_number, subtask_name) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     title,
@@ -1295,8 +1242,8 @@ class Database:
                     now,
                     now,
                     parent_task_id,
-                    subtask_type.value if subtask_type is not None else None,
                     attempt_number,
+                    subtask_name,
                 ),
             )
             task_id = cur.lastrowid
@@ -1308,8 +1255,8 @@ class Database:
             created_at=now,
             updated_at=now,
             parent_task_id=parent_task_id,
-            subtask_type=subtask_type,
             attempt_number=attempt_number,
+            subtask_name=subtask_name,
         )
 
     def update_task_status(
@@ -1364,13 +1311,6 @@ class Database:
     @staticmethod
     def _row_to_task(row: sqlite3.Row) -> Task:
         """Convierte una fila de la tabla ``tasks`` en un ``Task``."""
-        subtask_type_raw = row["subtask_type"]
-        subtask_type: Optional[SubtaskType] = None
-        if subtask_type_raw:
-            try:
-                subtask_type = SubtaskType(subtask_type_raw)
-            except ValueError:
-                subtask_type = None
         return Task(
             id=row["id"],
             title=row["title"],
@@ -1380,8 +1320,8 @@ class Database:
             updated_at=row["updated_at"],
             final_answer=row["final_answer"],
             parent_task_id=row["parent_task_id"],
-            subtask_type=subtask_type,
             attempt_number=row["attempt_number"] or 0,
+            subtask_name=row["subtask_name"] if "subtask_name" in row.keys() else None,
         )
 
     def delete_tasks_by_status(self, statuses: List[TaskStatus]) -> int:
@@ -3502,22 +3442,7 @@ class Agent:
                 else:
                     # Sin tool_calls: decidir si es respuesta final válida
                     # o si hay que forzar el uso de herramientas.
-                    #
-                    # Las subtareas REQUIREMENTS y EXECUTION_VERIFICATION
-                    # están diseñadas para terminar con una respuesta en
-                    # texto puro (documento de requisitos o veredicto de
-                    # verificación). En estos casos, el texto ES la respuesta
-                    # final y NO debemos inyectar recordatorios ni seguir
-                    # iterando.
-                    text_only_subtask_types = {
-                        SubtaskType.REQUIREMENTS,
-                        SubtaskType.EXECUTION_VERIFICATION,
-                    }
-                    allows_text_only_answer = (
-                        task.subtask_type in text_only_subtask_types
-                    )
-
-                    if tools_were_used or allows_text_only_answer:
+                    if tools_were_used:
                         final_answer = content or "(sin contenido)"
                         self._log(task_id, EventType.FINAL_ANSWER, final_answer)
                         self._set_status(
@@ -3619,162 +3544,42 @@ class Agent:
 # ORQUESTADOR DE SUBTAREAS
 # ============================================================================
 
-# Prompts fijos que el sistema inyecta para cada tipo de subtarea.
-# El LLM solo recibe el contexto del paso anterior; no decide la
-# descomposición (esa decisión la toma el orquestador).
-#
-# Estas son las plantillas POR DEFECTO. Si existe el fichero
-# ``subtareas.ini`` junto al ejecutable, las plantillas definidas allí
-# tienen prioridad y sobrescriben las correspondientes aquí.
-_DEFAULT_SUBTASK_PROMPTS: Dict[SubtaskType, str] = {
-    SubtaskType.REQUIREMENTS: (
-        "Eres un analista técnico. Tu única misión en esta subtarea es "
-        "producir un documento de REQUISITOS TÉCNICOS para la tarea del "
-        "usuario indicada más abajo.\n\n"
-        "REGLAS:\n"
-        "1. NO ejecutes ninguna acción (no llames a write_file, "
-        "execute_command, delete_file, etc.).\n"
-        "2. NO modifiques archivos. Solo analiza y documenta.\n"
-        "3. Tu respuesta final debe ser un documento estructurado con:\n"
-        "   - Objetivo principal\n"
-        "   - Restricciones y dependencias\n"
-        "   - Archivos a crear o modificar (con rutas relativas al workspace)\n"
-        "   - Comandos a ejecutar (si aplica)\n"
-        "   - Criterios de aceptación verificables\n"
-        "4. Sé conciso pero completo. Usa listas y secciones claras.\n\n"
-        "TAREA DEL USUARIO:\n{user_prompt}"
-    ),
-    SubtaskType.DEVELOPMENT: (
-        "Eres un desarrollador. Tu misión es implementar la solución "
-        "basándote en los REQUISITOS TÉCNICOS proporcionados más abajo.\n\n"
-        "REGLAS:\n"
-        "1. USA las herramientas disponibles (create_file, edit_file, "
-        "search_in_files, write_file, execute_command, read_file, etc.) "
-        "para implementar la solución.\n"
-        "2. Sigue los requisitos al pie de la letra.\n"
-        "3. Cuando termines la implementación, proporciona una respuesta "
-        "final concisa describiendo qué has creado/modificado y dónde.\n"
-        "4. NO verifiques la solución (eso lo hará la siguiente subtarea).\n\n"
-        "REQUISITOS TÉCNICOS:\n{requirements}\n\n"
-        "TAREA ORIGINAL DEL USUARIO:\n{user_prompt}"
-    ),
-    SubtaskType.EXECUTION_VERIFICATION: (
-        "Eres un verificador. Tu misión es EJECUTAR y COMPROBAR que la "
-        "solución implementada cumple los requisitos.\n\n"
-        "REGLAS:\n"
-        "1. USA las herramientas disponibles (execute_command, read_file, "
-        "list_directory, etc.) para ejecutar y verificar la solución.\n"
-        "2. Compara el resultado con los criterios de aceptación de los "
-        "requisitos.\n"
-        "3. Tu respuesta final debe comenzar EXACTAMENTE con una de estas "
-        "dos líneas (sin preámbulo):\n"
-        "   - 'VERIFICACIÓN EXITOSA: ...' (seguido de un resumen breve)\n"
-        "   - 'VERIFICACIÓN FALLIDA: ...' (seguido de la lista detallada "
-        "de errores o problemas encontrados)\n"
-        "4. Sé objetivo: si hay cualquier error, fallo de comando, archivo "
-        "faltante o comportamiento inesperado, marca como FALLIDA.\n\n"
-        "SOLUCIÓN IMPLEMENTADA:\n{solution}\n\n"
-        "REQUISITOS TÉCNICOS:\n{requirements}\n\n"
-        "TAREA ORIGINAL DEL USUARIO:\n{user_prompt}"
-    ),
-    SubtaskType.RECTIFICATION: (
-        "Eres un desarrollador en modo corrección. La solución anterior "
-        "ha FALLADO la verificación. Tu misión es producir una versión "
-        "CORREGIDA de la solución.\n\n"
-        "REGLAS:\n"
-        "1. Analiza cuidadosamente los errores reportados.\n"
-        "2. USA las herramientas disponibles (edit_file, search_in_files, "
-        "write_file, execute_command, read_file, etc.) para corregir los problemas.\n"
-        "3. NO repitas los mismos errores: cambia la estrategia si es "
-        "necesario.\n"
-        "4. Cuando termines, proporciona una respuesta final concisa "
-        "describiendo qué has corregido y por qué.\n\n"
-        "ERRORES REPORTADOS EN LA VERIFICACIÓN:\n{verification_errors}\n\n"
-        "SOLUCIÓN ANTERIOR (que falló):\n{previous_solution}\n\n"
-        "REQUISITOS TÉCNICOS:\n{requirements}\n\n"
-        "TAREA ORIGINAL DEL USUARIO:\n{user_prompt}"
-    ),
-}
-
-
-def _load_subtask_prompts_from_ini(
-    path: str = SUBTAREAS_INI_PATH,
-) -> Optional[Dict[SubtaskType, str]]:
-    """
-    Carga las plantillas de subtareas desde ``subtareas.ini``.
-
-    El fichero debe tener una sección por cada ``SubtaskType`` (usando el
-    ``value`` del enum como nombre de sección: ``REQUIREMENTS``,
-    ``DEVELOPMENT``, ``EXECUTION_VERIFICATION``, ``RECTIFICATION``) y una
-    clave ``prompt`` con la plantilla.
-
-    Retorna ``None`` si el fichero no existe. Si existe pero está vacío o
-    no contiene ninguna sección válida, retorna un diccionario vacío.
-    """
+# Plan de subtareas configurable en ``subtareas.ini``.
+def _load_subtask_plan(
+    path: Optional[str] = None,
+) -> List[Tuple[str, str]]:
+    """Carga en orden las etapas configuradas mediante secciones INI."""
+    path = path or SUBTAREAS_INI_PATH
     if not os.path.exists(path):
-        return None
+        return []
 
-    parser = configparser.ConfigParser()
+    parser = configparser.ConfigParser(interpolation=None)
     try:
         parser.read(path, encoding="utf-8")
     except configparser.Error as e:
-        print(
-            f"[AVISO] Error leyendo {path}: {e}. "
-            "Usando plantillas por defecto."
-        )
-        return {}
+        print(f"[AVISO] Error leyendo {path}: {e}. No se ejecutará ningún plan.")
+        return []
 
-    loaded: Dict[SubtaskType, str] = {}
-    for subtask_type in SubtaskType:
-        section = subtask_type.value
-        if parser.has_section(section) and parser.has_option(section, "prompt"):
-            template = parser.get(section, "prompt").strip()
-            if template:
-                loaded[subtask_type] = template
-    return loaded
+    return [
+        (section, parser.get(section, "prompt").strip())
+        for section in parser.sections()
+        if parser.has_option(section, "prompt") and parser.get(section, "prompt").strip()
+    ]
 
 
-def _build_subtask_prompts() -> Dict[SubtaskType, str]:
-    """
-    Construye el diccionario final de plantillas de subtareas.
-
-    Prioridad (de mayor a menor):
-        1. Plantillas definidas en ``subtareas.ini`` (si el fichero existe).
-        2. Plantillas por defecto definidas en ``_DEFAULT_SUBTASK_PROMPTS``.
-    """
-    prompts: Dict[SubtaskType, str] = dict(_DEFAULT_SUBTASK_PROMPTS)
-    overrides = _load_subtask_prompts_from_ini()
-    if overrides:
-        prompts.update(overrides)
-    return prompts
+class _SubtaskContext(dict):
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
 
 
-# Plantillas activas que el orquestador utiliza en tiempo de ejecución.
-# Se inicializan al cargar el módulo combinando ``subtareas.ini`` (si
-# existe) con los valores por defecto.
-_SUBTASK_PROMPTS: Dict[SubtaskType, str] = _build_subtask_prompts()
-
-# Marcadores que la subtarea de verificación debe producir.
-_VERIFICATION_SUCCESS_PREFIX = "VERIFICACIÓN EXITOSA:"
-_VERIFICATION_FAILURE_PREFIX = "VERIFICACIÓN FALLIDA:"
+def _format_subtask_prompt(template: str, context: Dict[str, str]) -> str:
+    """Sustituye placeholders conocidos y deja intactos los desconocidos."""
+    return template.format_map(_SubtaskContext(context))
 
 
 class TaskOrchestrator:
     """
-    Orquesta la descomposición de una tarea del usuario en subtareas.
-
-    Flujo normal:
-        1. REQUIREMENTS       → produce el documento de requisitos.
-        2. DEVELOPMENT        → implementa la solución.
-        3. EXECUTION_VERIFICATION → ejecuta y verifica.
-
-    Si la verificación falla, se inserta un ciclo de rectificación:
-        4. RECTIFICATION      → corrige la solución.
-        5. EXECUTION_VERIFICATION → vuelve a verificar.
-
-    El ciclo se repite hasta que la verificación sea exitosa o se
-    alcance ``MAX_RECTIFICATION_RETRIES``. En ese caso, la tarea
-    padre se marca como FAILED.
+    Orquesta secuencialmente las subtareas declaradas en ``subtareas.ini``.
 
     Cada subtarea es una ``Task`` independiente en la base de datos,
     con ``parent_task_id`` apuntando a la tarea padre. Esto permite
@@ -3786,12 +3591,10 @@ class TaskOrchestrator:
         db: Database,
         agent: Agent,
         ui_queue: "queue.Queue[Dict[str, Any]]",
-        max_retries: int = MAX_RECTIFICATION_RETRIES,
     ) -> None:
         self.db = db
         self.agent = agent
         self.ui_queue = ui_queue
-        self.max_retries = max_retries
 
     # --- API pública ---
 
@@ -3800,13 +3603,7 @@ class TaskOrchestrator:
         parent_task: Task,
         cancel_event: Optional[threading.Event] = None,
     ) -> None:
-        """
-        Ejecuta el flujo completo de descomposición para una tarea padre.
-
-        La tarea padre ya debe existir en la BD (creada por el dashboard).
-        Este método crea las subtareas, las ejecuta secuencialmente y
-        actualiza el estado de la tarea padre al final.
-        """
+        """Ejecuta secuencialmente el plan declarado en ``subtareas.ini``."""
         if parent_task.id is None:
             return
         parent_id = parent_task.id
@@ -3814,160 +3611,56 @@ class TaskOrchestrator:
             self._cancel_parent(parent_id, "Tarea abortada por el usuario.")
             return
 
+        plan = _load_subtask_plan()
+        if not plan:
+            self._fail_parent(parent_id, "El plan de subtareas está vacío o no contiene prompts válidos.")
+            return
         self._log_parent(
             parent_id,
             EventType.ORCHESTRATION_DECISION,
-            (
-                f"🎼 Orquestación iniciada. Se crearán 3 subtareas: "
-                f"Requisitos → Desarrollo → Ejecución/Verificación. "
-                f"Máx. reintentos de rectificación: {self.max_retries}."
-            ),
+            "🎼 Orquestación iniciada. Plan: " + " → ".join(name for name, _ in plan),
         )
 
-        # --- Subtarea 1: Requisitos ---
-        requirements_task = self._create_subtask(
-            parent_id,
-            SubtaskType.REQUIREMENTS,
-            attempt=0,
-            prompt=_SUBTASK_PROMPTS[SubtaskType.REQUIREMENTS].format(
-                user_prompt=parent_task.prompt,
-            ),
-        )
-        requirements_output = self._run_subtask(requirements_task, cancel_event)
-        if requirements_output is None:
+        context: Dict[str, str] = {"user_prompt": parent_task.prompt}
+        latest_output = ""
+        for name, template in plan:
             if cancel_event is not None and cancel_event.is_set():
                 self._cancel_parent(parent_id, "Tarea abortada por el usuario.")
                 return
-            self._fail_parent(parent_id, "La subtarea de requisitos no produjo resultado.")
-            return
 
-        # --- Subtarea 2: Desarrollo ---
-        development_task = self._create_subtask(
-            parent_id,
-            SubtaskType.DEVELOPMENT,
-            attempt=0,
-            prompt=_SUBTASK_PROMPTS[SubtaskType.DEVELOPMENT].format(
-                requirements=requirements_output,
-                user_prompt=parent_task.prompt,
-            ),
-        )
-        solution_output = self._run_subtask(development_task, cancel_event)
-        if solution_output is None:
-            if cancel_event is not None and cancel_event.is_set():
-                self._cancel_parent(parent_id, "Tarea abortada por el usuario.")
-                return
-            self._fail_parent(parent_id, "La subtarea de desarrollo no produjo resultado.")
-            return
-
-        # --- Subtarea 3: Ejecución y verificación (con ciclo de rectificación) ---
-        attempt = 0
-        verification_output: Optional[str] = None
-        previous_solution = solution_output
-
-        while True:
-            if cancel_event is not None and cancel_event.is_set():
-                self._cancel_parent(parent_id, "Tarea abortada por el usuario.")
-                return
-            verification_task = self._create_subtask(
+            task = self._create_subtask(
                 parent_id,
-                SubtaskType.EXECUTION_VERIFICATION,
-                attempt=attempt,
-                prompt=_SUBTASK_PROMPTS[SubtaskType.EXECUTION_VERIFICATION].format(
-                    solution=previous_solution,
-                    requirements=requirements_output,
-                    user_prompt=parent_task.prompt,
-                ),
+                attempt=0,
+                prompt=_format_subtask_prompt(template, context),
+                name=name,
             )
-            verification_output = self._run_subtask(verification_task, cancel_event)
-
-            if verification_output is None:
+            output = self._run_subtask(task, cancel_event)
+            if output is None:
                 if cancel_event is not None and cancel_event.is_set():
                     self._cancel_parent(parent_id, "Tarea abortada por el usuario.")
-                    return
-                self._fail_parent(
-                    parent_id,
-                    f"La subtarea de verificación (intento {attempt + 1}) "
-                    f"no produjo resultado.",
-                )
+                else:
+                    self._fail_parent(parent_id, f"La subtarea {name} no produjo resultado.")
                 return
 
-            if self._is_verification_successful(verification_output):
-                # Éxito: terminamos el flujo.
-                self._log_parent(
-                    parent_id,
-                    EventType.ORCHESTRATION_DECISION,
-                    (
-                        f"✅ Verificación exitosa en el intento {attempt + 1}. "
-                        f"Tarea padre completada."
-                    ),
-                )
-                self._complete_parent(parent_id, verification_output)
-                return
+            latest_output = output
+            context[name] = output
+            context[name.upper()] = output
+            context[name.lower()] = output
 
-            # Verificación fallida: decidir si reintentamos.
-            if attempt >= self.max_retries:
-                self._log_parent(
-                    parent_id,
-                    EventType.ORCHESTRATION_DECISION,
-                    (
-                        f"⛔ Se agotaron los reintentos de rectificación "
-                        f"({self.max_retries}). Tarea padre marcada como FAILED."
-                    ),
-                )
-                self._fail_parent(
-                    parent_id,
-                    f"Verificación fallida tras {self.max_retries} reintentos. "
-                    f"Último error: {verification_output[:200]}",
-                )
-                return
-
-            # Crear subtarea de rectificación y volver a verificar.
-            self._log_parent(
-                parent_id,
-                EventType.ORCHESTRATION_DECISION,
-                (
-                    f"🔧 Verificación fallida (intento {attempt + 1}). "
-                    f"Creando subtarea de rectificación "
-                    f"({attempt + 1}/{self.max_retries})."
-                ),
-            )
-            rectification_task = self._create_subtask(
-                parent_id,
-                SubtaskType.RECTIFICATION,
-                attempt=attempt,
-                prompt=_SUBTASK_PROMPTS[SubtaskType.RECTIFICATION].format(
-                    verification_errors=verification_output,
-                    previous_solution=previous_solution,
-                    requirements=requirements_output,
-                    user_prompt=parent_task.prompt,
-                ),
-            )
-            rectified_solution = self._run_subtask(rectification_task, cancel_event)
-            if rectified_solution is None:
-                if cancel_event is not None and cancel_event.is_set():
-                    self._cancel_parent(parent_id, "Tarea abortada por el usuario.")
-                    return
-                self._fail_parent(
-                    parent_id,
-                    f"La subtarea de rectificación (intento {attempt + 1}) "
-                    f"no produjo resultado.",
-                )
-                return
-
-            previous_solution = rectified_solution
-            attempt += 1
+        self._complete_parent(parent_id, latest_output)
 
     # --- Helpers internos ---
 
     def _create_subtask(
         self,
         parent_id: int,
-        subtask_type: SubtaskType,
         attempt: int,
         prompt: str,
+        name: str,
     ) -> Task:
         """Crea una subtarea en la BD y la registra en el historial del padre."""
-        title_prefix = f"[{subtask_type.icon} {subtask_type.label}]"
+        subtask_name = name
+        title_prefix = f"[{subtask_name}]"
         if attempt > 0:
             title_prefix += f" (intento {attempt + 1})"
         title = f"{title_prefix} #{parent_id}"
@@ -3976,14 +3669,14 @@ class TaskOrchestrator:
             title=title,
             prompt=prompt,
             parent_task_id=parent_id,
-            subtask_type=subtask_type,
             attempt_number=attempt,
+            subtask_name=subtask_name,
         )
         self._log_parent(
             parent_id,
             EventType.SUBTASK_CREATED,
             (
-                f"➕ Subtarea creada: #{task.id} — {subtask_type.label} "
+                f"➕ Subtarea creada: #{task.id} — {subtask_name} "
                 f"(intento {attempt + 1})"
             ),
         )
@@ -4006,7 +3699,8 @@ class TaskOrchestrator:
         self._log_parent(
             task.parent_task_id or task.id,
             EventType.SUBTASK_STARTED,
-            f"▶ Iniciando subtarea #{task.id} — {task.subtask_type.label if task.subtask_type else '?'}",
+            f"▶ Iniciando subtarea #{task.id} — "
+            f"{task.subtask_name or '?'}",
         )
         # El Agent.run() se ejecuta en el hilo del orquestador (que ya es
         # un hilo separado lanzado por el dashboard). Bloqueamos aquí
@@ -4036,31 +3730,6 @@ class TaskOrchestrator:
             ),
         )
         return None
-
-    @staticmethod
-    def _is_verification_successful(verification_output: str) -> bool:
-        """
-        Determina si la salida de la subtarea de verificación indica éxito.
-
-        La subtarea de verificación debe comenzar su respuesta final con
-        ``VERIFICACIÓN EXITOSA:`` o ``VERIFICACIÓN FALLIDA:``. Cualquier
-        otro contenido se considera fallo (por seguridad).
-        """
-        text = verification_output.strip()
-        verificacion_estado = None
-
-        if text.startswith(_VERIFICATION_FAILURE_PREFIX):
-            verificacion_estado = False
-        if text.startswith(_VERIFICATION_SUCCESS_PREFIX):
-            verificacion_estado = True
-        if verificacion_estado is None:
-            # No se reconoce el prefijo:busamos en todo el texto.
-            if _VERIFICATION_SUCCESS_PREFIX in text:
-                verificacion_estado = True
-            elif _VERIFICATION_FAILURE_PREFIX in text:
-                verificacion_estado = False
-
-        return verificacion_estado
 
     def _cancel_parent(self, parent_id: int, reason: str) -> None:
         """Marca la tarea padre como cancelada y registra el motivo."""

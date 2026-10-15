@@ -55,7 +55,6 @@ class QtDashboardLayoutTests(unittest.TestCase):
             LLM_MODE=hercules.LLM_MODE,
             LLM_MODEL=hercules.LLM_MODEL,
             LLM_BASE_URL=hercules.LLM_BASE_URL,
-            MAX_RECTIFICATION_RETRIES=hercules.MAX_RECTIFICATION_RETRIES,
             TaskStatus=hercules.TaskStatus,
             EventType=hercules.EventType,
             EVENT_LABELS=hercules.EVENT_LABELS,
@@ -288,8 +287,11 @@ class QtDashboardLayoutTests(unittest.TestCase):
             encoding="utf-8",
         )
         config = hercules.Config(str(config_path))
+        subtasks_path = Path(self.workspace_dir.name) / "subtareas.ini"
+        subtasks_path.write_text("[ANALIZAR]\\nprompt = Analiza\\n", encoding="utf-8")
         core = types.SimpleNamespace(
             CONFIG=config,
+            SUBTAREAS_INI_PATH=str(subtasks_path),
             Config=hercules.Config,
             _scan_config_file=hercules._scan_config_file,
             _update_config_file=hercules._update_config_file,
@@ -299,7 +301,14 @@ class QtDashboardLayoutTests(unittest.TestCase):
         dialog = SettingsDialog(core, self.window)
         self.addCleanup(dialog.close)
 
-        self.assertEqual(dialog.tabs.count(), len(config._parser.sections()))
+        self.assertEqual(dialog.tabs.count(), len(config._parser.sections()) + 1)
+        self.assertEqual(
+            dialog.tabs.tabText(dialog.tabs.count() - 1),
+            dialog.SUBTASKS_TAB_TITLE,
+        )
+        self.assertEqual(
+            dialog.subtasks_edit.toPlainText(), "[ANALIZAR]\\nprompt = Analiza\\n"
+        )
         self.assertIsInstance(dialog._fields[("LLM", "mode")], QComboBox)
         self.assertIsInstance(dialog._fields[("UI", "fullscreen")], QComboBox)
         api_key = dialog._fields[("LLM", "api_key")]
@@ -330,8 +339,17 @@ class QtDashboardLayoutTests(unittest.TestCase):
         )
 
         dialog._fields[("UI", "fullscreen")].setCurrentText("false")
+        dialog.subtasks_edit.setPlainText(
+            "[ANALIZAR]\\nprompt = Analiza la petición\\n\\n[IMPLEMENTAR]\\n"
+            "prompt = Ejecuta el plan\\n"
+        )
         with patch("hercules_qt.QMessageBox.information"):
             dialog._save()
+        self.assertEqual(
+            subtasks_path.read_text(encoding="utf-8"),
+            "[ANALIZAR]\\nprompt = Analiza la petición\\n\\n[IMPLEMENTAR]\\n"
+            "prompt = Ejecuta el plan\\n",
+        )
         saved = config_path.read_text(encoding="utf-8")
         self.assertIn("; Start maximized", saved)
         self.assertIn("fullscreen = false", saved)

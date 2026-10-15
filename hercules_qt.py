@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import configparser
 import queue
 import threading
 import traceback
@@ -131,6 +132,7 @@ class SettingsDialog(QDialog):
         "Agent": "🤖 Agente",
         "UI": "🎨 Interfaz",
     }
+    SUBTASKS_TAB_TITLE = "🔀 Subtareas"
     CHOICES = {
         ("LLM", "mode"): ("local", "http"),
         ("UI", "titlebar_style"): ("system", "dark", "accent", "custom"),
@@ -141,6 +143,9 @@ class SettingsDialog(QDialog):
         self.core = core_module
         self.config = core_module.CONFIG
         self.config_path = Path(self.config.path)
+        self.subtasks_path = Path(
+            getattr(core_module, "SUBTAREAS_INI_PATH", "subtareas.ini")
+        )
         self._fields: Dict[tuple[str, str], QWidget] = {}
         self._initial: Dict[tuple[str, str], str] = {}
         self.setWindowTitle("Configuración de Hercules")
@@ -151,8 +156,9 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.tabs, 1)
         try:
             self._build_tabs()
+            self._build_subtasks_tab()
         except OSError as exc:
-            raise OSError(f"No se pudo leer {self.config_path}: {exc}") from exc
+            raise OSError(f"No se pudo leer la configuración: {exc}") from exc
 
         footer = QHBoxLayout()
         footer.addWidget(
@@ -201,6 +207,31 @@ class SettingsDialog(QDialog):
             scroll.setWidgetResizable(True)
             scroll.setWidget(body)
             self.tabs.addTab(scroll, self.SECTION_TITLES.get(section, section))
+
+    def _build_subtasks_tab(self) -> None:
+        try:
+            self._initial_subtasks = self.subtasks_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            self._initial_subtasks = ""
+        tab = QWidget(self.tabs)
+        layout = QVBoxLayout(tab)
+        help_label = QLabel(
+            "Edita las etapas del plan en formato INI. Cada sección con una clave "
+            "'prompt' define una subtarea; el orden de las secciones determina "
+            "el orden de ejecución. Puedes usar {user_prompt} y los nombres de "
+            "etapas anteriores como placeholders.",
+            tab,
+        )
+        help_label.setWordWrap(True)
+        layout.addWidget(help_label)
+        self.subtasks_edit = QPlainTextEdit(tab)
+        self.subtasks_edit.setPlainText(self._initial_subtasks)
+        self.subtasks_edit.setTabStopDistance(
+            4 * self.subtasks_edit.fontMetrics().horizontalAdvance(" ")
+        )
+        self.subtasks_edit.setPlaceholderText("[ANALIZAR]\\nprompt = ...")
+        layout.addWidget(self.subtasks_edit, 1)
+        self.tabs.addTab(tab, self.SUBTASKS_TAB_TITLE)
 
     def _add_setting(
         self,
@@ -340,16 +371,32 @@ class SettingsDialog(QDialog):
                 return
             updates.setdefault(section, {})[key] = value
 
-        if not updates:
+        subtasks_text = self.subtasks_edit.toPlainText()
+        subtasks_changed = subtasks_text != self._initial_subtasks
+        if subtasks_changed:
+            try:
+                configparser.ConfigParser(interpolation=None).read_string(subtasks_text)
+            except configparser.Error as exc:
+                QMessageBox.critical(
+                    self,
+                    "Plan de subtareas no válido",
+                    f"Corrige el formato INI antes de guardar:\n{exc}",
+                )
+                return
+
+        if not updates and not subtasks_changed:
             self.accept()
             return
         try:
-            self.core._update_config_file(str(self.config_path), updates)
+            if updates:
+                self.core._update_config_file(str(self.config_path), updates)
+            if subtasks_changed:
+                self.subtasks_path.write_text(subtasks_text, encoding="utf-8")
         except OSError as exc:
             QMessageBox.critical(
                 self,
                 "Error al guardar",
-                f"No se pudo escribir {self.config_path}:\n{exc}",
+                f"No se pudo escribir la configuración:\n{exc}",
             )
             return
         QMessageBox.information(
@@ -430,7 +477,6 @@ class QtDashboard(QMainWindow):
             self.db,
             self.agent,
             self.ui_queue,
-            max_retries=core_module.MAX_RECTIFICATION_RETRIES,
         )
         self.selected_task_id: Optional[int] = None
         self._follow_active_task = True

@@ -2,24 +2,7 @@
 """
 test_subtareas.py
 
-Test del orquestador de subtareas (TaskOrchestrator).
-
-Verifica que el sistema de descomposición de tareas funciona correctamente:
-
-    1. Una tarea del usuario se divide en 3 subtareas:
-       REQUIREMENTS → DEVELOPMENT → EXECUTION_VERIFICATION.
-
-    2. Si EXECUTION_VERIFICATION falla, se crea una subtarea
-       RECTIFICATION y se vuelve a ejecutar EXECUTION_VERIFICATION.
-
-    3. El ciclo se repite hasta que la verificación sea exitosa o se
-       alcance max_rectification_retries.
-
-    4. Las subtareas quedan registradas en la BD con parent_task_id
-       apuntando a la tarea padre.
-
-    5. La tarea padre se marca como COMPLETED solo si la verificación
-       final es exitosa; en caso contrario, como FAILED.
+Pruebas del orquestador de fases secuenciales configuradas en subtareas.ini.
 
 Este test NO requiere un LLM real ni la interfaz gráfica.
 
@@ -29,6 +12,7 @@ Ejecutar:
 
 from __future__ import annotations
 
+import configparser
 import queue
 import shutil
 import sys
@@ -120,26 +104,15 @@ def teardown_test_env(tmp_dir: str) -> None:
 
 class ScriptedLLM:
     """
-    Mock de LLMConnector que devuelve respuestas según un guion.
+    Mock de LLMConnector que devuelve respuestas según un guion indexado por etapa.
 
-    El guion es un diccionario indexado por tipo de subtarea:
-        {"REQUIREMENTS": [...], "DEVELOPMENT": [...], ...}
-
-    Cada entrada es una lista de respuestas que se consumen secuencialmente
-    SOLO para esa instancia de subtarea. El mock detecta qué subtarea se
-    está ejecutando inspeccionando el contenido del prompt del usuario,
-    y detecta el inicio de una nueva instancia cuando los mensajes se
-    resetean (solo system + user).
-
-    Para distinguir entre instancias de la misma subtarea (por ejemplo,
-    dos verificaciones consecutivas), el guion puede usar la clave
-    ``"<SUBTASK>_N"`` donde N es el número de instancia (0, 1, 2...).
-    Si no existe esa clave, se usa ``<SUBTASK>`` como fallback.
+    Para distinguir entre instancias de una etapa, se puede usar la clave
+    ``"<ETAPA>_N"``; en su ausencia se usa la clave general de la etapa.
     """
 
     def __init__(self, script: Dict[str, List[Dict[str, Any]]]) -> None:
         self.script = script
-        # Contador de instancias por tipo de subtarea.
+        # Contador de instancias por nombre de etapa.
         self._instance_counters: Dict[str, int] = {}
         # Contador de llamadas dentro de la instancia actual.
         self._call_counters: Dict[str, int] = {}
@@ -147,26 +120,18 @@ class ScriptedLLM:
         self._lock = threading.Lock()
 
     def _detect_subtask(self, messages: List[Dict[str, Any]]) -> str:
-        """
-        Detecta qué subtarea se está ejecutando por el contenido del prompt.
-
-        Usa marcadores robustos que están presentes tanto en las plantillas
-        por defecto (``_DEFAULT_SUBTASK_PROMPTS``) como en las plantillas
-        personalizadas cargadas desde ``subtareas.ini``. El orden de las
-        comprobaciones es importante: ``RECTIFICATION`` se evalúa primero
-        porque su prompt también contiene la palabra "desarrollador".
-        """
+        """Detecta la subtarea por sus marcadores de prueba en el prompt."""
         if len(messages) < 2:
             return "UNKNOWN"
-        user_msg_lower = messages[1].get("content", "").lower()
-        if "modo corrección" in user_msg_lower:
-            return "RECTIFICATION"
-        if "verificador" in user_msg_lower:
-            return "EXECUTION_VERIFICATION"
-        if "analista técnico" in user_msg_lower:
-            return "REQUIREMENTS"
-        if "desarrollador" in user_msg_lower:
-            return "DEVELOPMENT"
+        prompt = messages[1].get("content", "")
+        for marker, subtask in (
+            ("[TEST:PREPARAR]", "PREPARAR"),
+            ("[TEST:FABRICAR]", "FABRICAR"),
+            ("[TEST:VALIDAR]", "VALIDAR"),
+            ("[TEST:ETAPA_FALLA]", "ETAPA_FALLA"),
+        ):
+            if marker in prompt:
+                return subtask
         return "UNKNOWN"
 
     def _resolve_script_key(self, subtask: str) -> Optional[str]:
@@ -310,7 +275,6 @@ class MockPermissionManager:
 def make_orchestrator(
     db: ga.Database,
     script: Dict[str, List[Dict[str, Any]]],
-    max_retries: int = 3,
 ) -> Tuple[ga.TaskOrchestrator, ScriptedLLM]:
     """Crea un orquestador con un MockLLM guionizado."""
     ui_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
@@ -322,7 +286,6 @@ def make_orchestrator(
         db=db,
         agent=agent,
         ui_queue=ui_queue,
-        max_retries=max_retries,
     )
     return orchestrator, llm
 
@@ -351,222 +314,89 @@ def run_orchestrator(
 # TESTS
 # ============================================================================
 
-def test_happy_path_no_rectification(tmp_dir: str, workspace: str) -> None:
-    """
-    Escenario feliz: las 3 subtareas se ejecutan correctamente y la
-    verificación es exitosa en el primer intento. No debe haber
-    subtareas de rectificación.
-    """
-    RESULTS.section("Flujo feliz: 3 subtareas, verificación exitosa al primer intento")
+def _write_test_plan(tmp_dir: str, *sections: Tuple[str, str]) -> Path:
+    path = Path(tmp_dir) / f"plan-{time.time_ns()}.ini"
+    parser = configparser.ConfigParser(interpolation=None)
+    for name, prompt in sections:
+        parser[name] = {"prompt": prompt}
+    with path.open("w", encoding="utf-8") as config_file:
+        parser.write(config_file)
+    ga.SUBTAREAS_INI_PATH = str(path)
+    return path
 
-    db = make_test_db(tmp_dir)
-    script = {
-        "REQUIREMENTS": [
-            {"final": "Requisitos:\n- Crear archivo hola.txt con contenido 'Hola mundo'."},
-        ],
-        "DEVELOPMENT": [
-            {"tool": "write_file", "args": {"path": "hola.txt", "content": "Hola mundo"}},
-            {"final": "He creado hola.txt con el contenido solicitado."},
-        ],
-        "EXECUTION_VERIFICATION": [
-            {"tool": "read_file", "args": {"path": "hola.txt"}},
-            {"final": "VERIFICACIÓN EXITOSA: el archivo hola.txt contiene 'Hola mundo'."},
-        ],
-    }
-    orchestrator, _ = make_orchestrator(db, script)
-    parent = run_orchestrator(db, orchestrator, "Crea un archivo hola.txt")
 
-    # Verificar estado de la tarea padre.
-    parent_after = db.get_task(parent.id)
-    assert_eq(parent_after.status, ga.TaskStatus.COMPLETED, "tarea padre → COMPLETED")
-    assert_true(
-        parent_after.final_answer is not None
-        and parent_after.final_answer.startswith("VERIFICACIÓN EXITOSA"),
-        "final_answer de la tarea padre comienza con VERIFICACIÓN EXITOSA",
+def test_configured_plan_runs_only_declared_stages(tmp_dir: str, workspace: str) -> None:
+    RESULTS.section("Plan de etapas completamente configurable")
+    old_plan_path = ga.SUBTAREAS_INI_PATH
+    config_path = _write_test_plan(
+        tmp_dir,
+        ("PREPARAR", "[TEST:PREPARAR] {user_prompt}"),
+        ("FABRICAR", "[TEST:FABRICAR] Petición={user_prompt}; anterior={PREPARAR}"),
+        ("VALIDAR", "[TEST:VALIDAR] Fabricación={FABRICAR}"),
     )
-
-    # Verificar que se crearon exactamente 3 subtareas.
-    subtasks = db.list_subtasks(parent.id)
-    assert_eq(len(subtasks), 3, "se crean exactamente 3 subtareas")
-
-    # Verificar el orden y tipo de las subtareas.
-    expected_types = [
-        ga.SubtaskType.REQUIREMENTS,
-        ga.SubtaskType.DEVELOPMENT,
-        ga.SubtaskType.EXECUTION_VERIFICATION,
-    ]
-    actual_types = [st.subtask_type for st in subtasks]
-    assert_eq(actual_types, expected_types, "orden y tipo de subtareas correcto")
-
-    # Verificar que todas las subtareas están COMPLETED.
-    for st in subtasks:
-        assert_eq(st.status, ga.TaskStatus.COMPLETED, f"subtarea #{st.id} → COMPLETED")
-
-    # Verificar que NO hay subtareas de rectificación.
-    rectifications = [
-        st for st in subtasks if st.subtask_type == ga.SubtaskType.RECTIFICATION
-    ]
-    assert_eq(len(rectifications), 0, "no hay subtareas de rectificación")
-
-
-def test_one_rectification_cycle(tmp_dir: str, workspace: str) -> None:
-    """
-    La verificación falla en el primer intento pero tiene éxito tras
-    una rectificación. Debe haber 4 subtareas (3 + 1 rectificación)
-    y la tarea padre debe quedar COMPLETED.
-    """
-    RESULTS.section("Un ciclo de rectificación: verificación falla → rectifica → verifica OK")
-
-    db = make_test_db(tmp_dir)
-    failure_msg = "VERIFICACIÓN FALLIDA: el archivo test.txt no existe."
-    success_msg = "VERIFICACIÓN EXITOSA: test.txt existe y contiene 'test'."
-    script = {
-        "REQUIREMENTS": [
-            {"final": "Requisitos:\n- Crear archivo test.txt con contenido 'test'."},
-        ],
-        "DEVELOPMENT": [
-            {"tool": "write_file", "args": {"path": "test.txt", "content": "test"}},
-            {"final": "He creado test.txt."},
-        ],
-        # Primera verificación (instancia 0): siempre falla.
-        "EXECUTION_VERIFICATION_0": [
-            {"final": failure_msg},
-        ],
-        "RECTIFICATION": [
-            {"tool": "write_file", "args": {"path": "test.txt", "content": "test"}},
-            {"final": "He recreado test.txt."},
-        ],
-        # Segunda verificación (instancia 1): siempre tiene éxito.
-        "EXECUTION_VERIFICATION_1": [
-            {"final": success_msg},
-        ],
-    }
-
-    orchestrator, _ = make_orchestrator(db, script, max_retries=3)
-    parent = run_orchestrator(db, orchestrator, "Crea test.txt")
-
-    parent_after = db.get_task(parent.id)
-    assert_eq(parent_after.status, ga.TaskStatus.COMPLETED, "tarea padre → COMPLETED tras rectificación")
-
-    subtasks = db.list_subtasks(parent.id)
-    # Flujo: REQUIREMENTS + DEVELOPMENT + VERIFICATION(0) + RECTIFICATION(0) + VERIFICATION(1)
-    assert_eq(len(subtasks), 5, "se crean 5 subtareas (3 + 1 rectificación + 1 verificación extra)")
-
-    rectifications = [
-        st for st in subtasks if st.subtask_type == ga.SubtaskType.RECTIFICATION
-    ]
-    assert_eq(len(rectifications), 1, "hay exactamente 1 subtarea de rectificación")
-
-    verifications = [
-        st for st in subtasks if st.subtask_type == ga.SubtaskType.EXECUTION_VERIFICATION
-    ]
-    assert_eq(len(verifications), 2, "hay 2 subtareas de verificación")
-    assert_eq(verifications[0].attempt_number, 0, "primera verificación → attempt 0")
-    assert_eq(verifications[1].attempt_number, 1, "segunda verificación → attempt 1")
+    try:
+        db = make_test_db(tmp_dir)
+        orchestrator, _ = make_orchestrator(
+            db,
+            {
+                "PREPARAR": [{"final": "Preparación lista."}],
+                "FABRICAR": [{"final": "Fabricación lista."}],
+                "VALIDAR": [{"final": "Validación lista."}],
+            },
+        )
+        parent = run_orchestrator(db, orchestrator, "Crear una pieza")
+        parent_after = db.get_task(parent.id)
+        subtasks = db.list_subtasks(parent.id)
+        assert_eq(parent_after.status, ga.TaskStatus.COMPLETED, "el plan configurado completa la tarea")
+        assert_eq([task.subtask_name for task in subtasks], ["PREPARAR", "FABRICAR", "VALIDAR"], "solo se ejecutan etapas declaradas y en orden")
+        assert_eq(len(subtasks), 3, "cada fase configurada genera una subtarea")
+        assert_true("Crear una pieza" in subtasks[0].prompt, "{user_prompt} se resuelve")
+        assert_true("Preparación lista." in subtasks[1].prompt, "placeholder anterior se resuelve")
+        assert_true("Fabricación lista." in subtasks[2].prompt, "se puede referenciar cualquier etapa previa")
+    finally:
+        ga.SUBTAREAS_INI_PATH = old_plan_path
+        config_path.unlink(missing_ok=True)
 
 
-def test_max_retries_exhausted(tmp_dir: str, workspace: str) -> None:
-    """
-    La verificación falla siempre. Tras agotar max_retries, la tarea
-    padre debe quedar FAILED.
-    """
-    RESULTS.section("Agotamiento de reintentos: verificación siempre falla")
-
-    db = make_test_db(tmp_dir)
-    # Todas las verificaciones fallan; las rectificaciones "corrigen"
-    # pero la verificación sigue fallando.
-    script = {
-        "REQUIREMENTS": [
-            {"final": "Requisitos:\n- Tarea imposible."},
-        ],
-        "DEVELOPMENT": [
-            {"final": "He intentado hacer la tarea."},
-        ],
-        "EXECUTION_VERIFICATION": [
-            {"final": "VERIFICACIÓN FALLIDA: error 1."},
-            {"final": "VERIFICACIÓN FALLIDA: error 2."},
-            {"final": "VERIFICACIÓN FALLIDA: error 3."},
-            {"final": "VERIFICACIÓN FALLIDA: error 4."},
-        ],
-        "RECTIFICATION": [
-            {"final": "Intento de corrección 1."},
-            {"final": "Intento de corrección 2."},
-            {"final": "Intento de corrección 3."},
-        ],
-    }
-
-    max_retries = 2
-    orchestrator, _ = make_orchestrator(db, script, max_retries=max_retries)
-    parent = run_orchestrator(db, orchestrator, "Tarea imposible")
-
-    parent_after = db.get_task(parent.id)
-    assert_eq(parent_after.status, ga.TaskStatus.FAILED, "tarea padre → FAILED tras agotar reintentos")
-
-    subtasks = db.list_subtasks(parent.id)
-    # Flujo con max_retries=2:
-    # REQUIREMENTS + DEVELOPMENT + VERIFICATION(0) + RECTIFICATION(0) +
-    # VERIFICATION(1) + RECTIFICATION(1) + VERIFICATION(2)
-    # = 3 iniciales + max_retries rectificaciones + max_retries verificaciones extra
-    # = 3 + 2 + 2 = 7
-    expected_count = 3 + max_retries + max_retries
-    assert_eq(len(subtasks), expected_count, f"se crean {expected_count} subtareas")
-
-    rectifications = [
-        st for st in subtasks if st.subtask_type == ga.SubtaskType.RECTIFICATION
-    ]
-    assert_eq(len(rectifications), max_retries, f"hay {max_retries} rectificaciones")
-
-
-def test_subtask_failure_marks_parent_failed(tmp_dir: str, workspace: str) -> None:
-    """
-    Si la subtarea de REQUISITOS falla (no produce respuesta final),
-    la tarea padre debe quedar FAILED sin crear más subtareas.
-    """
-    RESULTS.section("Fallo en subtarea de requisitos → tarea padre FAILED")
-
-    db = make_test_db(tmp_dir)
-    # La subtarea de requisitos no produce respuesta final (se agotan
-    # las iteraciones del agente).
-    script = {
-        "REQUIREMENTS": [],  # Sin respuestas → el agente se queda sin iteraciones.
-    }
-
-    orchestrator, _ = make_orchestrator(db, script)
-    parent = run_orchestrator(db, orchestrator, "Tarea cualquiera")
-
-    parent_after = db.get_task(parent.id)
-    assert_eq(parent_after.status, ga.TaskStatus.FAILED, "tarea padre → FAILED")
-
-    subtasks = db.list_subtasks(parent.id)
-    assert_eq(len(subtasks), 1, "solo se crea la subtarea de requisitos")
-    assert_eq(subtasks[0].subtask_type, ga.SubtaskType.REQUIREMENTS, "la única subtarea es REQUIREMENTS")
+def test_stage_failure_stops_plan(tmp_dir: str, workspace: str) -> None:
+    RESULTS.section("Un fallo detiene las etapas siguientes")
+    old_plan_path = ga.SUBTAREAS_INI_PATH
+    config_path = _write_test_plan(
+        tmp_dir,
+        ("ETAPA_FALLA", "[TEST:ETAPA_FALLA] {user_prompt}"),
+        ("NUNCA_EJECUTAR", "Esto no debe ejecutarse"),
+    )
+    try:
+        db = make_test_db(tmp_dir)
+        orchestrator, _ = make_orchestrator(db, {"ETAPA_FALLA": []})
+        parent = run_orchestrator(db, orchestrator, "Probar fallo")
+        assert_eq(db.get_task(parent.id).status, ga.TaskStatus.FAILED, "el padre falla con la subtarea")
+        assert_eq([task.subtask_name for task in db.list_subtasks(parent.id)], ["ETAPA_FALLA"], "no se ejecutan fases posteriores")
+    finally:
+        ga.SUBTAREAS_INI_PATH = old_plan_path
+        config_path.unlink(missing_ok=True)
 
 
 def test_subtasks_have_correct_parent_link(tmp_dir: str, workspace: str) -> None:
-    """
-    Todas las subtareas deben tener parent_task_id apuntando a la
-    tarea padre correcta.
-    """
+    """Todas las subtareas registran el padre correcto."""
     RESULTS.section("Relación padre-subtarea en la BD")
-
-    db = make_test_db(tmp_dir)
-    script = {
-        "REQUIREMENTS": [{"final": "Requisitos OK."}],
-        "DEVELOPMENT": [{"final": "Desarrollo OK."}],
-        "EXECUTION_VERIFICATION": [{"final": "VERIFICACIÓN EXITOSA: todo bien."}],
-    }
-    orchestrator, _ = make_orchestrator(db, script)
-    parent = run_orchestrator(db, orchestrator, "Tarea de prueba")
-
-    subtasks = db.list_subtasks(parent.id)
-    for st in subtasks:
-        assert_eq(st.parent_task_id, parent.id, f"subtarea #{st.id} tiene parent_task_id correcto")
+    old_plan_path = ga.SUBTAREAS_INI_PATH
+    config_path = _write_test_plan(tmp_dir, ("PREPARAR", "[TEST:PREPARAR] {user_prompt}"))
+    try:
+        db = make_test_db(tmp_dir)
+        orchestrator, _ = make_orchestrator(db, {"PREPARAR": [{"final": "Listo."}]})
+        parent = run_orchestrator(db, orchestrator, "Tarea de prueba")
+        subtasks = db.list_subtasks(parent.id)
+        for st in subtasks:
+            assert_eq(st.parent_task_id, parent.id, f"subtarea #{st.id} tiene parent_task_id correcto")
+    finally:
+        ga.SUBTAREAS_INI_PATH = old_plan_path
+        config_path.unlink(missing_ok=True)
 
 
 def test_database_schema_migration(tmp_dir: str, workspace: str) -> None:
     """
-    Verifica que el esquema de la BD incluye las nuevas columnas
-    (parent_task_id, subtask_type, attempt_number).
+    Verifica que el esquema de la BD incluye las columnas de subtarea.
     """
     RESULTS.section("Esquema de BD con nuevas columnas")
 
@@ -577,7 +407,7 @@ def test_database_schema_migration(tmp_dir: str, workspace: str) -> None:
         title="hijo",
         prompt="test",
         parent_task_id=parent.id,
-        subtask_type=ga.SubtaskType.REQUIREMENTS,
+        subtask_name="PREPARAR",
         attempt_number=0,
     )
 
@@ -595,11 +425,51 @@ def test_database_schema_migration(tmp_dir: str, workspace: str) -> None:
         "subtarea tiene parent_task_id apuntando al padre",
     )
     assert_eq(
-        child_after.subtask_type,
-        ga.SubtaskType.REQUIREMENTS,
-        "subtarea tiene subtask_type correcto",
+        child_after.subtask_name,
+        "PREPARAR",
+        "subtarea conserva el nombre personalizado",
     )
     assert_eq(child_after.attempt_number, 0, "subtarea tiene attempt_number correcto")
+
+
+def test_custom_subtask_plan(tmp_dir: str, workspace: str) -> None:
+    """Las etapas configurables resuelven placeholders y nombres de salida."""
+    RESULTS.section("Plan configurable con placeholders")
+    old_plan_path = ga.SUBTAREAS_INI_PATH
+    config_path = _write_test_plan(
+        tmp_dir,
+        ("PREPARAR", "[TEST:PREPARAR] {user_prompt}"),
+        ("FABRICAR", "[TEST:FABRICAR] Petición={user_prompt}; previo={PREPARAR}"),
+    )
+    try:
+        db = make_test_db(tmp_dir)
+        orchestrator, _ = make_orchestrator(
+            db,
+            {
+                "PREPARAR": [{"final": "Preparación completada."}],
+                "FABRICAR": [{"final": "Fabricación completada."}],
+            },
+        )
+        parent = run_orchestrator(db, orchestrator, "Crear una pieza")
+        subtasks = db.list_subtasks(parent.id)
+        parent_after = db.get_task(parent.id)
+        assert_eq(parent_after.status, ga.TaskStatus.COMPLETED, "plan configurable completa la tarea")
+        assert_eq(len(subtasks), 2, "se crean las dos etapas configuradas")
+        if len(subtasks) == 2:
+            assert_true("FABRICAR" in subtasks[1].title, "nombre personalizado visible en el título")
+            assert_true(
+                "Crear una pieza" in subtasks[1].prompt
+                and "{user_prompt}" not in subtasks[1].prompt,
+                "placeholder {user_prompt} reemplazado",
+            )
+            assert_true(
+                "Preparación completada." in subtasks[1].prompt,
+                "placeholder de etapa previa sustituido por su salida",
+            )
+            assert_eq(subtasks[1].subtask_name, "FABRICAR", "nombre personalizado persistido")
+    finally:
+        ga.SUBTAREAS_INI_PATH = old_plan_path
+        config_path.unlink(missing_ok=True)
 
 
 # ============================================================================
@@ -610,11 +480,10 @@ def main() -> int:
     tmp_dir, workspace = setup_test_env()
     try:
         test_database_schema_migration(tmp_dir, workspace)
-        test_happy_path_no_rectification(tmp_dir, workspace)
-        test_one_rectification_cycle(tmp_dir, workspace)
-        test_max_retries_exhausted(tmp_dir, workspace)
-        test_subtask_failure_marks_parent_failed(tmp_dir, workspace)
+        test_configured_plan_runs_only_declared_stages(tmp_dir, workspace)
+        test_stage_failure_stops_plan(tmp_dir, workspace)
         test_subtasks_have_correct_parent_link(tmp_dir, workspace)
+        test_custom_subtask_plan(tmp_dir, workspace)
     finally:
         teardown_test_env(tmp_dir)
 

@@ -74,8 +74,7 @@ Usar el script `run.bat`, que activa el entorno virtual y lanza `hercules.py`.
 
 El fichero `config.ini` ya viene incluido con valores por defecto; edítalo para ajustar la ruta del modelo GGUF, el modo del LLM (`local` / `http`) y otros parámetros.
 
-El fichero `subtareas.ini` edítalo para ajustar el plan de trabajo del agente.
-
+El fichero `subtareas.ini` es la única definición del plan de trabajo del agente: cada sección en orden que tenga un `prompt` crea una subtarea con ese nombre. Puedes añadir, quitar, renombrar o reordenar fases libremente; usa `{user_prompt}` para incluir la petición original y `{NOMBRE_SECCION}` para insertar la salida de una subtarea anterior. No hay fases especiales ni plan predeterminado: si falta el fichero o no define subtareas válidas, el programa no ejecuta ninguna subtarea. El `subtareas.ini` distribuido incluye un plan inicial (`ANALIZAR`, `IMPLEMENTAR`, `COMPROBAR`) que puedes sustituir por completo.
 La barra de título se configura con `titlebar_style` (`system` | `dark` | `accent` | `custom`) en `[UI]`; también admite las variables de entorno `HERCULES_TITLEBAR_STYLE`, `HERCULES_TITLEBAR_COLOR` y `HERCULES_TITLEBAR_TEXT_COLOR`. En plataformas distintas de Windows no tiene efecto.
 
 ## 🧪 Tests

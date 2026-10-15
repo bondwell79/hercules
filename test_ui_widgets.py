@@ -54,7 +54,6 @@ class DashboardWidgetTests(TestCase):
             LLM_MODE=hercules.LLM_MODE,
             LLM_MODEL=hercules.LLM_MODEL,
             LLM_BASE_URL=hercules.LLM_BASE_URL,
-            MAX_RECTIFICATION_RETRIES=hercules.MAX_RECTIFICATION_RETRIES,
             TaskStatus=hercules.TaskStatus,
             EventType=hercules.EventType,
             EVENT_LABELS=hercules.EVENT_LABELS,
