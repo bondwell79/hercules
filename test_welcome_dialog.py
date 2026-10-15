@@ -1,46 +1,73 @@
-"""Test that the WelcomeDialog works correctly."""
-import sys
+"""Tests for the Qt welcome dialog shown during application startup."""
+
 import os
+import types
+import unittest
+from unittest.mock import Mock, patch
 
-# Add the hercules directory to the path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
+os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu --no-sandbox")
 
-try:
-    import tkinter as tk
-    from tkinter import ttk
-    import hercules
+from PySide6.QtWidgets import QApplication, QCheckBox, QDialog, QWidget
 
-    # Create a root window
-    root = tk.Tk()
-    root.title("Test Root")
-    root.geometry("800x600")
+import hercules_qt
 
-    # Create the welcome dialog
-    dialog = hercules.WelcomeDialog(root)
 
-    # Update the window to process all pending events
-    root.update_idletasks()
-    root.update()
+class WelcomeDialogTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
 
-    # Verify the dialog window size
-    print(f"Dialog window size: {dialog.window.winfo_width()}x{dialog.window.winfo_height()}")
-    print(f"Dialog reqwidth: {dialog.window.winfo_reqwidth()}")
-    print(f"Dialog reqheight: {dialog.window.winfo_reqheight()}")
+    def _run_startup(self, accepted, disable_welcome):
+        core = types.SimpleNamespace(
+            VERSION="test",
+            CONFIG=types.SimpleNamespace(
+                ui_mono_font_family="Consolas",
+                ui_mono_font_size=12,
+            ),
+            WelcomeDialog=types.SimpleNamespace(ASCII_ART="HERCULES"),
+            _load_welcome_pref=Mock(return_value=True),
+            _save_welcome_pref=Mock(),
+        )
+        dialog_seen = []
 
-    # Verify that the dialog has a reasonable size
-    assert dialog.window.winfo_reqwidth() > 400, "Dialog is too narrow"
-    assert dialog.window.winfo_reqheight() > 300, "Dialog is too short"
+        def execute_dialog(dialog):
+            dialog_seen.append(dialog)
+            checkbox = next(
+                item
+                for item in dialog.findChildren(QCheckBox)
+                if item.text() == "No mostrar este mensaje al iniciar"
+            )
+            checkbox.setChecked(disable_welcome)
+            return (
+                QDialog.DialogCode.Accepted
+                if accepted
+                else QDialog.DialogCode.Rejected
+            )
 
-    # Verify the outer RoundedFrame
-    print(f"Outer frame size: {dialog.window.winfo_width()}x{dialog.window.winfo_height()}")
+        with (
+            patch.object(hercules_qt, "QtDashboard", return_value=QWidget()),
+            patch.object(QDialog, "exec", execute_dialog),
+            patch.object(QApplication, "exec", return_value=0),
+        ):
+            self.assertEqual(hercules_qt.main(core), 0)
 
-    print("\nWelcomeDialog test passed!")
+        self.assertEqual(len(dialog_seen), 1)
+        return core, dialog_seen[0]
 
-    # Clean up
-    dialog.window.destroy()
-    root.destroy()
-except Exception as e:
-    print(f"FAIL: {e}")
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
+    def test_welcome_dialog_contents_and_opt_out_are_shown(self):
+        core, dialog = self._run_startup(accepted=True, disable_welcome=True)
+
+        self.assertEqual(dialog.windowTitle(), "Bienvenido a Hercules test")
+        labels = [label.text() for label in dialog.findChildren(hercules_qt.QLabel)]
+        self.assertIn("HERCULES", labels)
+        core._save_welcome_pref.assert_called_once_with(False)
+
+    def test_dismissing_dialog_does_not_save_opt_out(self):
+        core, _dialog = self._run_startup(accepted=False, disable_welcome=True)
+        core._save_welcome_pref.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

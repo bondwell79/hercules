@@ -1,53 +1,34 @@
-"""Test that the modern title bar helper works correctly."""
-import sys
+"""Tests for title-bar settings exposed by the migrated Qt settings dialog."""
+
 import os
+import unittest
 
-# Add the hercules directory to the path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
+os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu --no-sandbox")
 
-try:
-    import hercules
-    print("OK: hercules module imported successfully")
+import hercules
+from hercules_qt import SettingsDialog
+from PySide6.QtWidgets import QApplication, QComboBox
 
-    # Check that the helper function exists
-    assert hasattr(hercules, "_apply_modern_titlebar"), \
-        "_apply_modern_titlebar not found"
-    print("OK: _apply_modern_titlebar function is defined")
 
-    # Check that the helper accepts a window argument
-    import inspect
-    sig = inspect.signature(hercules._apply_modern_titlebar)
-    assert "window" in sig.parameters, \
-        "_apply_modern_titlebar must accept a 'window' parameter"
-    print("OK: _apply_modern_titlebar accepts a 'window' parameter")
+class TitlebarSettingsTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
 
-    # Verify the function is callable and doesn't crash on a fake window
-    class FakeWindow:
-        def frame(self):
-            raise RuntimeError("no real frame")
+    def test_settings_dialog_offers_supported_titlebar_styles(self):
+        dialog = SettingsDialog(hercules, None)
+        self.addCleanup(dialog.close)
 
-        def winfo_id(self):
-            return 0
+        field = dialog._fields[("UI", "titlebar_style")]
+        self.assertIsInstance(field, QComboBox)
+        self.assertEqual(
+            [field.itemText(index) for index in range(field.count())],
+            ["system", "dark", "accent", "custom"],
+        )
+        self.assertIn(field.currentText(), {"system", "dark", "accent", "custom"})
 
-    # Should not raise (it should silently ignore errors).
-    hercules._apply_modern_titlebar(FakeWindow())
-    print("OK: _apply_modern_titlebar handles fake window gracefully")
 
-    # Verify the config options are accessible
-    config = hercules.CONFIG
-    style = config.ui_titlebar_style
-    color = config.ui_titlebar_color
-    text_color = config.ui_titlebar_text_color
-    print(f"OK: Config values: style={style!r}, color={color!r}, text_color={text_color!r}")
-
-    # Verify the default style is one of the valid options
-    assert style in {"system", "dark", "accent", "custom"}, \
-        f"Invalid default style: {style}"
-    print(f"OK: Default style {style!r} is valid")
-
-    print("\nAll modern title bar tests passed!")
-except Exception as e:
-    print(f"FAIL: {e}")
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
+if __name__ == "__main__":
+    unittest.main()

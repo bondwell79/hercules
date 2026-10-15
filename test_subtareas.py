@@ -21,7 +21,7 @@ Verifica que el sistema de descomposición de tareas funciona correctamente:
     5. La tarea padre se marca como COMPLETED solo si la verificación
        final es exitosa; en caso contrario, como FAILED.
 
-Este test NO requiere un LLM real ni la UI tkinter.
+Este test NO requiere un LLM real ni la interfaz gráfica.
 
 Ejecutar:
     python test_subtareas.py

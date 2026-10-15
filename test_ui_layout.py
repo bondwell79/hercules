@@ -1,148 +1,243 @@
-"""Test that the UI layout works correctly with realistic content."""
-import sys
+"""Headless Qt dashboard layout and JavaScript smoke tests."""
+
 import os
+import tempfile
+import types
+import unittest
+from unittest.mock import patch
+from pathlib import Path
 
-# Add the hercules directory to the path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
+os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu --no-sandbox")
 
-try:
-    import tkinter as tk
-    from tkinter import ttk
-    import hercules
+import hercules
+from hercules_qt import QtDashboard, SettingsDialog, _is_within_workspace
+from PySide6.QtCore import QEventLoop, QTimer, QUrl, Qt
+from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QFormLayout,
+    QLabel,
+    QLineEdit,
+    QSplitter,
+)
 
-    # Create a root window
-    root = tk.Tk()
-    root.title("Test Dashboard")
-    root.geometry("1200x800")
-    root.configure(bg=hercules.CONFIG.ui_bg_color)
 
-    # Simulate the dashboard layout
-    # Top zone: prompt + buttons
-    top = ttk.Frame(root, padding=10)
-    top.pack(side="top", fill="x")
+class _EmptyDatabase:
+    def delete_tasks_by_status(self, _statuses):
+        return 0
 
-    ttk.Label(top, text="📝 Nueva instrucción para el agente").pack(anchor="w")
+    def list_tasks(self, _statuses):
+        return []
 
-    prompt_card = hercules.RoundedFrame(
-        top,
-        bg=hercules.CONFIG.ui_prompt_bg,
-        border_color=hercules.CONFIG.ui_card_border_color,
-        border_width=hercules.CONFIG.ui_card_border_width,
-        radius=hercules.CONFIG.ui_corner_radius,
-        padding=2,
-    )
-    prompt_card.pack(fill="x", pady=(6, 6))
+    def get_task(self, _task_id):
+        return None
 
-    prompt_text = tk.Text(
-        prompt_card.inner,
-        height=4,
-        wrap="word",
-        font=(hercules.CONFIG.ui_mono_font_family, hercules.CONFIG.ui_mono_font_size),
-        relief="flat",
-        borderwidth=0,
-        background=hercules.CONFIG.ui_prompt_bg,
-        foreground=hercules.CONFIG.ui_prompt_fg,
-        highlightthickness=0,
-        padx=8,
-        pady=6,
-    )
-    prompt_text.pack(fill="both", expand=True)
-    prompt_text.insert("1.0", "Test prompt content")
 
-    btn_row = ttk.Frame(top)
-    btn_row.pack(fill="x")
+class QtDashboardLayoutTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
 
-    btn1 = hercules.RoundedButton(
-        btn_row,
-        text="▶ Ejecutar",
-        command=lambda: None,
-        bg=hercules.CONFIG.ui_button_accent_bg,
-        fg=hercules.CONFIG.ui_button_accent_fg,
-        hover_bg=hercules.CONFIG.ui_button_accent_hover_bg,
-        pressed_bg=hercules.CONFIG.ui_button_accent_pressed_bg,
-        radius=hercules.CONFIG.ui_corner_radius,
-        font=(hercules.CONFIG.ui_font_family, hercules.CONFIG.ui_font_size, "bold"),
-        padding_x=18,
-        padding_y=8,
-    )
-    btn1.pack(side="left")
+    def setUp(self):
+        self.workspace_dir = tempfile.TemporaryDirectory()
+        workspace = Path(self.workspace_dir.name)
+        self.core = types.SimpleNamespace(
+            CONFIG=hercules.CONFIG,
+            CONFIG_PATH=hercules.CONFIG_PATH,
+            WORKSPACE_DIR=workspace,
+            SCRIPT_DIR=hercules.SCRIPT_DIR,
+            VERSION=hercules.VERSION,
+            LLM_MODE=hercules.LLM_MODE,
+            LLM_MODEL=hercules.LLM_MODEL,
+            LLM_BASE_URL=hercules.LLM_BASE_URL,
+            MAX_RECTIFICATION_RETRIES=hercules.MAX_RECTIFICATION_RETRIES,
+            TaskStatus=hercules.TaskStatus,
+            EventType=hercules.EventType,
+            EVENT_LABELS=hercules.EVENT_LABELS,
+            Database=_EmptyDatabase,
+            ToolsRegistry=lambda: object(),
+            LLMConnector=lambda: object(),
+            PermissionManager=lambda _queue: object(),
+            Agent=lambda *_args: object(),
+            TaskOrchestrator=lambda *_args, **_kwargs: object(),
+        )
+        self.window = QtDashboard(self.core)
 
-    btn2 = hercules.RoundedButton(
-        btn_row,
-        text="🧹 Limpiar",
-        command=lambda: None,
-        bg=hercules.CONFIG.ui_button_bg,
-        fg=hercules.CONFIG.ui_button_fg,
-        hover_bg=hercules.CONFIG.ui_button_hover_bg,
-        pressed_bg=hercules.CONFIG.ui_button_pressed_bg,
-        radius=hercules.CONFIG.ui_corner_radius,
-        padding_x=14,
-        padding_y=6,
-    )
-    btn2.pack(side="left", padx=(8, 0))
+    def tearDown(self):
+        self.window.close()
+        self.workspace_dir.cleanup()
 
-    # Middle zone: two columns
-    middle = ttk.Frame(root, padding=(10, 0))
-    middle.pack(side="top", fill="both", expand=True)
-    middle.columnconfigure(0, weight=1)
-    middle.columnconfigure(1, weight=1)
-    middle.rowconfigure(0, weight=1)
+    def test_dashboard_uses_requested_two_column_layout(self):
+        columns = self.window.centralWidget()
+        self.assertIsInstance(columns, QSplitter)
+        left, right = columns.widget(0), columns.widget(1)
+        self.assertIsInstance(left, QSplitter)
+        self.assertIsInstance(right, QSplitter)
 
-    left = hercules.RoundedFrame(
-        middle,
-        bg=hercules.CONFIG.ui_card_bg,
-        border_color=hercules.CONFIG.ui_card_border_color,
-        border_width=hercules.CONFIG.ui_card_border_width,
-        radius=hercules.CONFIG.ui_corner_radius,
-        padding=10,
-    )
-    left.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        self.assertEqual(
+            [left.widget(i).title() for i in range(left.count())],
+            [
+                "Nueva instrucción para el agente",
+                "Tareas",
+                "Historial de tarea",
+            ],
+        )
+        self.assertEqual(
+            [right.widget(i).title() for i in range(right.count())],
+            ["Explorador del workspace", "Navegador web (Qt WebEngine / Chromium)"],
+        )
+        self.assertTrue(
+            self.window.web_view.settings().testAttribute(
+                QWebEngineSettings.WebAttribute.JavascriptEnabled
+            )
+        )
 
-    ttk.Label(left.inner, text="Pendientes y en ejecución").pack(anchor="w")
-    ttk.Label(left.inner, text="Tarea 1: En progreso").pack(anchor="w", pady=2)
-    ttk.Label(left.inner, text="Tarea 2: Pendiente").pack(anchor="w", pady=2)
+    def test_webengine_executes_javascript(self):
+        loop = QEventLoop()
+        result = []
+        timer = QTimer()
+        timer.setSingleShot(True)
+        timer.timeout.connect(loop.quit)
+        page_path = Path(self.workspace_dir.name) / "page with spaces.html"
+        page_path.write_text(
+            "<html><head><title>pending</title></head>"
+            "<body><script>document.title = 'qt-webengine-js-ok';</script></body></html>",
+            encoding="utf-8",
+        )
 
-    right = hercules.RoundedFrame(
-        middle,
-        bg=hercules.CONFIG.ui_card_bg,
-        border_color=hercules.CONFIG.ui_card_border_color,
-        border_width=hercules.CONFIG.ui_card_border_width,
-        radius=hercules.CONFIG.ui_corner_radius,
-        padding=10,
-    )
-    right.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+        def on_loaded(success):
+            if success:
+                self.window.web_view.page().runJavaScript(
+                    "document.title",
+                    lambda title: (result.append(title), loop.quit()),
+                )
+            else:
+                loop.quit()
 
-    ttk.Label(right.inner, text="Ejecutadas / Históricas").pack(anchor="w")
-    ttk.Label(right.inner, text="Tarea 3: Completada").pack(anchor="w", pady=2)
+        self.window.web_view.loadFinished.connect(on_loaded)
+        self.window.web_view.setUrl(QUrl.fromLocalFile(str(page_path)))
+        timer.start(15000)
+        loop.exec()
+        self.window.web_view.loadFinished.disconnect(on_loaded)
+        self.assertEqual(result, ["qt-webengine-js-ok"])
 
-    # Update the window to process all pending events
-    root.update_idletasks()
-    root.update()
+    def test_local_document_policy_confines_files_to_workspace(self):
+        workspace = Path(self.workspace_dir.name)
+        inside = workspace / "document.html"
+        outside = workspace.parent / "outside.html"
+        self.assertTrue(_is_within_workspace(inside, workspace))
+        self.assertFalse(_is_within_workspace(outside, workspace))
+        page = self.window.web_view.page()
+        self.assertTrue(
+            page.acceptNavigationRequest(
+                QUrl.fromLocalFile(str(inside)),
+                QWebEnginePage.NavigationType.NavigationTypeOther,
+                True,
+            )
+        )
+        self.assertFalse(
+            page.acceptNavigationRequest(
+                QUrl.fromLocalFile(str(outside)),
+                QWebEnginePage.NavigationType.NavigationTypeOther,
+                True,
+            )
+        )
 
-    # Verify sizes
-    print(f"Root window size: {root.winfo_width()}x{root.winfo_height()}")
-    print(f"Prompt card size: {prompt_card.canvas.winfo_width()}x{prompt_card.canvas.winfo_height()}")
-    print(f"Button 1 size: {btn1.canvas.winfo_width()}x{btn1.canvas.winfo_height()}")
-    print(f"Button 2 size: {btn2.canvas.winfo_width()}x{btn2.canvas.winfo_height()}")
-    print(f"Left card size: {left.canvas.winfo_width()}x{left.canvas.winfo_height()}")
-    print(f"Right card size: {right.canvas.winfo_width()}x{right.canvas.winfo_height()}")
+        class RequestInfo:
+            def __init__(self, requested_url, first_party_url):
+                self._requested_url = requested_url
+                self._first_party_url = first_party_url
+                self.blocked = False
 
-    # Verify that the cards have reasonable sizes (not collapsed)
-    assert prompt_card.canvas.winfo_width() > 100, "Prompt card is too small"
-    assert prompt_card.canvas.winfo_height() > 50, "Prompt card is too small"
-    assert btn1.canvas.winfo_width() > 50, "Button 1 is too small"
-    assert btn1.canvas.winfo_height() > 20, "Button 1 is too small"
-    assert left.canvas.winfo_width() > 100, "Left card is too small"
-    assert left.canvas.winfo_height() > 50, "Left card is too small"
-    assert right.canvas.winfo_width() > 100, "Right card is too small"
-    assert right.canvas.winfo_height() > 50, "Right card is too small"
+            def requestUrl(self):
+                return self._requested_url
 
-    print("\nAll layout tests passed!")
+            def firstPartyUrl(self):
+                return self._first_party_url
 
-    # Clean up
-    root.destroy()
-except Exception as e:
-    print(f"FAIL: {e}")
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
+            def block(self, blocked):
+                self.blocked = blocked
+
+        interceptor = self.window._request_interceptor
+        outside_request = RequestInfo(
+            QUrl.fromLocalFile(str(outside)),
+            QUrl.fromLocalFile(str(inside)),
+        )
+        interceptor.interceptRequest(outside_request)
+        self.assertTrue(outside_request.blocked)
+
+        remote_page_request = RequestInfo(
+            QUrl.fromLocalFile(str(inside)),
+            QUrl("https://example.com/"),
+        )
+        interceptor.interceptRequest(remote_page_request)
+        self.assertTrue(remote_page_request.blocked)
+
+    def test_settings_dialog_uses_typed_controls_and_preserves_comments(self):
+        config_path = Path(self.workspace_dir.name) / "config.ini"
+        config_path.write_text(
+            "[LLM]\n"
+            "; Select local or HTTP mode\n"
+            "mode = http\n\n"
+            "[UI]\n"
+            "; Start maximized\n"
+            "fullscreen = true\n",
+            encoding="utf-8",
+        )
+        config = hercules.Config(str(config_path))
+        core = types.SimpleNamespace(
+            CONFIG=config,
+            Config=hercules.Config,
+            _scan_config_file=hercules._scan_config_file,
+            _update_config_file=hercules._update_config_file,
+            _HEX_COLOR_RE=hercules._HEX_COLOR_RE,
+            re=hercules.re,
+        )
+        dialog = SettingsDialog(core, self.window)
+        self.addCleanup(dialog.close)
+
+        self.assertEqual(dialog.tabs.count(), len(config._parser.sections()))
+        self.assertIsInstance(dialog._fields[("LLM", "mode")], QComboBox)
+        self.assertIsInstance(dialog._fields[("UI", "fullscreen")], QComboBox)
+        api_key = dialog._fields[("LLM", "api_key")]
+        self.assertIsInstance(api_key, QLineEdit)
+        self.assertEqual(api_key.echoMode(), QLineEdit.EchoMode.Password)
+        self.assertEqual(
+            dialog._fields[("LLM", "mode")].toolTip(),
+            "Select local or HTTP mode",
+        )
+        form = dialog.tabs.widget(0).widget().layout()
+        self.assertIsInstance(form, QFormLayout)
+        description_row = next(
+            row
+            for row in range(form.rowCount())
+            if form.itemAt(row, QFormLayout.ItemRole.SpanningRole) is not None
+            and isinstance(
+                form.itemAt(row, QFormLayout.ItemRole.SpanningRole).widget(), QLabel
+            )
+            and form.itemAt(row, QFormLayout.ItemRole.SpanningRole).widget().text()
+            == "Select local or HTTP mode"
+        )
+        description = form.itemAt(
+            description_row, QFormLayout.ItemRole.SpanningRole
+        ).widget()
+        self.assertEqual(
+            description.alignment(),
+            Qt.AlignmentFlag.AlignJustify | Qt.AlignmentFlag.AlignTop,
+        )
+
+        dialog._fields[("UI", "fullscreen")].setCurrentText("false")
+        with patch("hercules_qt.QMessageBox.information"):
+            dialog._save()
+        saved = config_path.read_text(encoding="utf-8")
+        self.assertIn("; Start maximized", saved)
+        self.assertIn("fullscreen = false", saved)
+        self.assertIn("; Select local or HTTP mode", saved)
+        self.assertIn("mode = http", saved)
+
+
+if __name__ == "__main__":
+    unittest.main()

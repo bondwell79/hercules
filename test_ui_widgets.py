@@ -1,97 +1,85 @@
-"""Test that the new UI widgets can be instantiated and rendered."""
-import sys
+"""Headless smoke tests for the migrated Qt dashboard widgets."""
+
 import os
+import sys
+import tempfile
+import types
+from pathlib import Path
+from unittest import TestCase, main
 
-# Add the hercules directory to the path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
+os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu --no-sandbox")
 
-try:
-    import tkinter as tk
-    from tkinter import ttk
-    import hercules
+SCRIPT_DIR = Path(__file__).parent.resolve()
+sys.path.insert(0, str(SCRIPT_DIR))
 
-    # Create a root window
-    root = tk.Tk()
-    root.withdraw()  # Hide the window
+import hercules
+from hercules_qt import QtDashboard
+from PySide6.QtWidgets import (
+    QApplication,
+    QPlainTextEdit,
+    QPushButton,
+    QTreeView,
+    QTreeWidget,
+)
+from PySide6.QtWebEngineWidgets import QWebEngineView
 
-    # Test RoundedFrame
-    frame = hercules.RoundedFrame(
-        root,
-        bg=hercules.CONFIG.ui_card_bg,
-        border_color=hercules.CONFIG.ui_card_border_color,
-        border_width=hercules.CONFIG.ui_card_border_width,
-        radius=hercules.CONFIG.ui_corner_radius,
-        padding=10,
-    )
-    frame.pack(fill="both", expand=True)
-    print("OK: RoundedFrame instantiated")
 
-    # Add a child widget to the inner frame
-    ttk.Label(frame.inner, text="Test label").pack()
-    print("OK: Child widget added to RoundedFrame.inner")
+class _EmptyDatabase:
+    def delete_tasks_by_status(self, _statuses):
+        return 0
 
-    # Test RoundedButton
-    btn = hercules.RoundedButton(
-        root,
-        text="Test Button",
-        command=lambda: None,
-        bg=hercules.CONFIG.ui_button_accent_bg,
-        fg=hercules.CONFIG.ui_button_accent_fg,
-        hover_bg=hercules.CONFIG.ui_button_accent_hover_bg,
-        pressed_bg=hercules.CONFIG.ui_button_accent_pressed_bg,
-        radius=hercules.CONFIG.ui_corner_radius,
-        font=(hercules.CONFIG.ui_font_family, hercules.CONFIG.ui_font_size, "bold"),
-        padding_x=14,
-        padding_y=6,
-    )
-    btn.pack()
-    print("OK: RoundedButton instantiated")
+    def list_tasks(self, _statuses):
+        return []
 
-    # Test configure method
-    btn.configure(text="Updated Text")
-    assert btn.canvas.itemcget(btn._text_id, "text") == "Updated Text", "Text not updated"
-    print("OK: RoundedButton.configure(text=...) works")
+    def get_task(self, _task_id):
+        return None
 
-    btn._anim_ms = 0
-    btn.configure(state="disabled")
-    assert btn._disabled == True, "Disabled state not set"
-    assert btn._current_color == btn._disabled_bg, "Disabled button color not applied"
-    print("OK: RoundedButton.configure(state='disabled') works")
 
-    btn.configure(state="normal")
-    assert btn._disabled == False, "Normal state not set"
-    assert btn._current_color == btn._bg, "Normal button color not restored"
-    print("OK: RoundedButton.configure(state='normal') works")
+class DashboardWidgetTests(TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
 
-    # Test GradientCanvas
-    canvas = hercules.GradientCanvas(
-        root,
-        color_top=hercules.CONFIG.ui_context_bar_bg,
-        color_bottom=hercules.CONFIG.ui_context_bar_bg,
-        radius=hercules.CONFIG.ui_corner_radius,
-        height=16,
-    )
-    canvas.pack(fill="x")
-    print("OK: GradientCanvas instantiated")
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        workspace = Path(self.temp_dir.name)
+        self.core = types.SimpleNamespace(
+            CONFIG=hercules.CONFIG,
+            CONFIG_PATH=hercules.CONFIG_PATH,
+            WORKSPACE_DIR=workspace,
+            SCRIPT_DIR=hercules.SCRIPT_DIR,
+            VERSION=hercules.VERSION,
+            LLM_MODE=hercules.LLM_MODE,
+            LLM_MODEL=hercules.LLM_MODEL,
+            LLM_BASE_URL=hercules.LLM_BASE_URL,
+            MAX_RECTIFICATION_RETRIES=hercules.MAX_RECTIFICATION_RETRIES,
+            TaskStatus=hercules.TaskStatus,
+            EventType=hercules.EventType,
+            EVENT_LABELS=hercules.EVENT_LABELS,
+            Database=_EmptyDatabase,
+            ToolsRegistry=lambda: object(),
+            LLMConnector=lambda: object(),
+            PermissionManager=lambda _queue: object(),
+            Agent=lambda *_args: object(),
+            TaskOrchestrator=lambda *_args, **_kwargs: object(),
+        )
+        self.window = QtDashboard(self.core)
 
-    # Test _draw_rounded_rect helper
-    test_canvas = tk.Canvas(root, width=100, height=50)
-    test_canvas.pack()
-    hercules._draw_rounded_rect(
-        test_canvas, 0, 0, 100, 50, radius=10, fill="#ff0000", outline=""
-    )
-    print("OK: _draw_rounded_rect works")
+    def tearDown(self):
+        self.window.close()
+        self.temp_dir.cleanup()
 
-    # Update the window to process all pending events
-    root.update_idletasks()
-    root.update()
+    def test_dashboard_exposes_native_qt_controls(self):
+        self.assertIsInstance(self.window.prompt_edit, QPlainTextEdit)
+        self.assertIsInstance(self.window.execute_button, QPushButton)
+        self.assertIsInstance(self.window.abort_button, QPushButton)
+        self.assertIsInstance(self.window.active_tasks, QTreeWidget)
+        self.assertIsInstance(self.window.file_tree, QTreeView)
+        self.assertIsInstance(self.window.web_view, QWebEngineView)
+        self.assertEqual(self.window.windowTitle(), f"Hercules {hercules.VERSION}")
 
-    # Clean up
-    root.destroy()
 
-    print("\nAll UI widget tests passed!")
-except Exception as e:
-    print(f"FAIL: {e}")
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
+if __name__ == "__main__":
+    main()

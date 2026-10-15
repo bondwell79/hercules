@@ -18,7 +18,7 @@ Nota sobre el diseño del test:
     el LLMConnector es compartido, pero las respuestas son independientes
     por tarea; aquí simulamos esa independencia con mocks separados.
 
-Este test NO requiere un LLM real ni la UI tkinter.
+Este test NO requiere un LLM real ni la interfaz gráfica.
 
 Ejecutar:
     python test_funcionamiento.py
@@ -223,7 +223,7 @@ def simulate_user_execute(
     """
     Simula la acción del usuario al pulsar el botón "Ejecutar" en el
     dashboard: crea la tarea en la BD y lanza el agente en un hilo
-    separado (igual que hace Dashboard._on_execute).
+    separado (igual que hace QtDashboard._execute_task).
 
     Retorna la tarea recién creada.
     """

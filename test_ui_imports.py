@@ -1,54 +1,56 @@
-"""Test that the new UI widgets can be imported and instantiated."""
-import sys
+"""Smoke tests for the Qt UI imports and configuration."""
+
 import os
+import sys
+from pathlib import Path
 
-# Add the hercules directory to the path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
+os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu --no-sandbox")
 
-try:
-    import hercules
-    print("OK: hercules module imported successfully")
+SCRIPT_DIR = Path(__file__).parent.resolve()
+sys.path.insert(0, str(SCRIPT_DIR))
 
-    # Check that the new widgets exist
-    assert hasattr(hercules, "RoundedFrame"), "RoundedFrame not found"
-    assert hasattr(hercules, "RoundedButton"), "RoundedButton not found"
-    assert hasattr(hercules, "GradientCanvas"), "GradientCanvas not found"
-    assert hasattr(hercules, "_draw_rounded_rect"), "_draw_rounded_rect not found"
-    print("OK: All new widgets are defined")
+import hercules
+import hercules_qt
+from PySide6.QtWebEngineWidgets import QWebEngineView
+from PySide6.QtWidgets import QMainWindow
 
-    # Check that the new config options exist
+
+def main() -> int:
+    assert issubclass(hercules_qt.QtDashboard, QMainWindow)
+    assert issubclass(hercules_qt.WorkspaceWebPage, hercules_qt.QWebEnginePage)
+    assert hercules_qt.SettingsDialog is not None
+    assert QWebEngineView is not None
+
     config = hercules.CONFIG
-    assert hasattr(config, "ui_corner_radius"), "ui_corner_radius not found"
-    assert hasattr(config, "ui_card_border_width"), "ui_card_border_width not found"
-    assert hasattr(config, "ui_card_border_color"), "ui_card_border_color not found"
-    assert hasattr(config, "ui_accent_color"), "ui_accent_color not found"
-    assert hasattr(config, "ui_window_alpha"), "ui_window_alpha not found"
-    assert hasattr(config, "ui_button_accent_bg"), "ui_button_accent_bg not found"
-    assert hasattr(config, "ui_button_accent_fg"), "ui_button_accent_fg not found"
-    assert hasattr(config, "ui_button_accent_hover_bg"), "ui_button_accent_hover_bg not found"
-    assert hasattr(config, "ui_button_accent_pressed_bg"), "ui_button_accent_pressed_bg not found"
-    assert hasattr(config, "ui_button_hover_bg"), "ui_button_hover_bg not found"
-    assert hasattr(config, "ui_button_pressed_bg"), "ui_button_pressed_bg not found"
-    assert hasattr(config, "ui_button_danger_bg"), "ui_button_danger_bg not found"
-    assert hasattr(config, "ui_button_danger_fg"), "ui_button_danger_fg not found"
-    assert hasattr(config, "ui_button_danger_hover_bg"), "ui_button_danger_hover_bg not found"
-    assert hasattr(config, "ui_button_danger_pressed_bg"), "ui_button_danger_pressed_bg not found"
-    # Opciones de barra de título moderna (Windows 10/11 vía DWM).
-    assert hasattr(config, "ui_titlebar_style"), "ui_titlebar_style not found"
-    assert hasattr(config, "ui_titlebar_color"), "ui_titlebar_color not found"
-    assert hasattr(config, "ui_titlebar_text_color"), "ui_titlebar_text_color not found"
-    assert config.ui_titlebar_style in {"system", "dark", "accent", "custom"}, \
-        f"ui_titlebar_style invalid: {config.ui_titlebar_style}"
-    print("OK: All new config options are defined")
+    for name in (
+        "ui_font_family",
+        "ui_font_size",
+        "ui_fullscreen",
+        "ui_frame_bg",
+        "ui_fg_color",
+        "ui_card_bg",
+        "ui_card_border_color",
+        "ui_prompt_bg",
+        "ui_prompt_fg",
+        "ui_accent_color",
+        "ui_window_alpha",
+    ):
+        assert hasattr(config, name), f"Falta la opción Qt UI {name}"
 
-    # Check that the values are reasonable
-    assert 0 <= config.ui_corner_radius <= 30, f"ui_corner_radius out of range: {config.ui_corner_radius}"
-    assert 0.5 <= config.ui_window_alpha <= 1.0, f"ui_window_alpha out of range: {config.ui_window_alpha}"
-    print(f"OK: Config values are valid (corner_radius={config.ui_corner_radius}, window_alpha={config.ui_window_alpha})")
+    assert 0.5 <= config.ui_window_alpha <= 1.0
+    assert config.ui_titlebar_style in {"system", "dark", "accent", "custom"}
+    print("OK: Qt dashboard, Chromium WebEngine y configuración importados")
+    return 0
 
-    print("\nAll UI import tests passed!")
-except Exception as e:
-    print(f"FAIL: {e}")
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception as exc:
+        print(f"FAIL: {exc}")
+        import traceback
+
+        traceback.print_exc()
+        sys.exit(1)

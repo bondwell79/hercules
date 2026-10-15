@@ -11,7 +11,7 @@
 ..................................................................
 ```
 
-> Gestor agéntico de modelos LLM con control de permisos humano-en-el-bucle (HITL), construido exclusivamente con la biblioteca estándar de Python
+> Gestor agéntico de modelos LLM con control de permisos humano-en-el-bucle (HITL). El motor usa la biblioteca estándar de Python; la interfaz gráfica utiliza PySide6.
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -44,11 +44,16 @@ delete_file	        SAFE	Elimina un archivo o directorio del workspace.
 
 ## 🎨 Interfaz moderna
 
-La interfaz gráfica ha sido rediseñada con un aspecto moderno y personalizable.
+La interfaz gráfica utiliza Qt for Python (PySide6). A la izquierda se muestran
+el prompt, las tareas y el historial; a la derecha, el explorador del workspace
+y un navegador embebido basado en Qt WebEngine (Chromium), con soporte para
+JavaScript. El acceso desde documentos locales del navegador queda restringido
+al workspace.
 
 ## 📦 Requisitos
 
 - Python 3.11 o superior
+- PySide6 y PySide6-WebEngine (se instalan desde `requirements.txt`)
 - Creado para windows pero compatible con linux.
 - Opcional: `pyautogui` (para las herramientas autorizadas de captura de pantalla y ratón; instalar con `python -m pip install pyautogui`).
 - Opcional: `llama-cpp-python` (solo para modo local)
@@ -59,6 +64,7 @@ La interfaz gráfica ha sido rediseñada con un aspecto moderno y personalizable
 ```bash
 git clone https://github.com/bondwell79/hercules.git
 cd hercules
+python -m pip install PySide6==6.12.0 PySide6-WebEngine==6.12.0.140
 python hercules.py
 ```
 
@@ -86,11 +92,11 @@ Suites individuales:
 | `test_resilience.py` | resiliencia ante respuestas malformadas del LLM |
 | `test_funcionamiento.py` | tareas en paralelo con historiales independientes |
 | `test_subtareas.py` | orquestador de subtareas y rectificación |
-| `test_ui_imports.py` | importación de widgets y opciones de configuración |
-| `test_ui_widgets.py` | instanciación y render de widgets |
-| `test_ui_layout.py` | layout del dashboard con contenido realista |
-| `test_modern_titlebar.py` | helper de barra de título (DWM) |
-| `test_welcome_dialog.py` | diálogo de bienvenida |
+| `test_ui_imports.py` | importación del dashboard Qt, Qt WebEngine y configuración de UI |
+| `test_ui_widgets.py` | instanciación de controles Qt del dashboard |
+| `test_ui_layout.py` | layout Qt y ejecución de JavaScript en Chromium |
+| `test_modern_titlebar.py` | opciones de barra de título en Configuración Qt |
+| `test_welcome_dialog.py` | diálogo Qt de bienvenida durante el arranque |
 | `test_computer_tools.py` | herramientas de captura de pantalla y control del ratón |
 
 ## 🏗️ Compilar ejecutable en Windows

@@ -31,7 +31,18 @@ if exist "venv\Scripts\activate.bat" (
     exit /b 1
 )
 
-:: 3. Verificar si llama-cpp-python esta instalado; si no, instalar la rueda precompilada para CPU
+:: 3. Verificar Qt y Qt WebEngine
+python -c "from PySide6.QtWebEngineWidgets import QWebEngineView" >nul 2>&1
+if errorlevel 1 (
+    echo [INFO] Qt WebEngine no detectado. Instalando dependencias de la interfaz...
+    python -m pip install PySide6==6.12.0 PySide6-WebEngine==6.12.0.140
+    if errorlevel 1 (
+        echo [ERROR] No se pudieron instalar PySide6 y Qt WebEngine.
+        exit /b 1
+    )
+)
+
+:: 4. Verificar si llama-cpp-python esta instalado; si no, instalar la rueda precompilada para CPU
 python -c "import llama_cpp" >nul 2>&1
 if errorlevel 1 (
     echo [INFO] llama-cpp-python no detectado. Instalando binario precompilado para CPU...
@@ -45,12 +56,12 @@ if errorlevel 1 (
     echo [INFO] llama-cpp-python ya esta instalado.
 )
 
-:: 4. Ejecutar el modelo
+:: 5. Ejecutar el modelo
 cd modelos
 call qwen3-instruct.bat
 cd ..
 
-:: 5. Ejecutar el script principal
+:: 6. Ejecutar el script principal
 echo [INFO] Ejecutando el script de Python...
 python hercules.py
 

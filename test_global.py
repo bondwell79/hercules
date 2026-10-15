@@ -9,11 +9,11 @@ Suites ejecutadas (en este orden):
     1. test_resilience.py        — resiliencia ante respuestas malformadas del LLM.
     2. test_funcionamiento.py    — tareas simultáneas e historiales independientes.
     3. test_subtareas.py         — orquestador de subtareas y rectificación.
-    4. test_ui_imports.py        — importación de widgets UI y opciones de config.
-    5. test_ui_widgets.py        — instanciación y render de widgets UI.
+    4. test_ui_imports.py        — importación de la UI Qt y opciones de config.
+    5. test_ui_widgets.py        — instanciación de controles Qt del dashboard.
     6. test_ui_layout.py         — layout del dashboard con contenido realista.
-    7. test_modern_titlebar.py   — helper de barra de título moderna (DWM).
-    8. test_welcome_dialog.py    — diálogo de bienvenida.
+    7. test_modern_titlebar.py   — opciones de barra de título en Configuración Qt.
+    8. test_welcome_dialog.py    — diálogo Qt de bienvenida durante el arranque.
     9. test_computer_tools.py    — herramientas autorizadas de captura y ratón.
 
 Cada suite se lanza como subproceso independiente para mantener el
@@ -62,6 +62,12 @@ SUITES: List[tuple] = [
     (SCRIPT_DIR / "test_computer_tools.py",  "test_computer_tools"),
 ]
 
+QT_TEST_ENV = {
+    "QT_QPA_PLATFORM": "offscreen",
+    "QTWEBENGINE_DISABLE_SANDBOX": "1",
+    "QTWEBENGINE_CHROMIUM_FLAGS": "--disable-gpu --no-sandbox",
+}
+
 
 # ============================================================================
 # TIPOS
@@ -105,6 +111,7 @@ def run_suite(path: Path, name: str, verbose: bool) -> SuiteResult:
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUTF8"] = "1"
+        env.update(QT_TEST_ENV)
 
         completed = subprocess.run(
             [sys.executable, str(path)],

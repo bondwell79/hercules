@@ -9,7 +9,7 @@ Objetivo: verificar que hercules.py NO se rompe ante respuestas
 erróneas del modelo (tool_calls malformados, JSON inválido, nombres
 de herramientas inexistentes, argumentos con tipos incorrectos, etc.).
 
-Este test NO requiere un LLM real ni llama a la UI tkinter.
+Este test NO requiere un LLM real ni llama a la interfaz gráfica.
 Utiliza mocks para el LLMConnector y el PermissionManager.
 
 Ejecutar:
