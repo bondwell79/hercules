@@ -29,6 +29,7 @@ import io
 import json
 import os
 import queue
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -55,7 +56,7 @@ import computer_tools
 # ============================================================================
 
 CONFIG_PATH = os.environ.get("HERCULES_CONFIG", "config.ini")
-VERSION = "1.50"
+VERSION = "1.80"
 SUBTAREAS_INI_PATH = os.environ.get("HERCULES_SUBTAREAS_INI", "subtareas.ini")
 
 # Patrones peligrosos organizados por categoría.
@@ -483,8 +484,9 @@ class Config:
         Timeout (en segundos) para la ejecución de comandos del sistema
         invocados por la herramienta ``execute_command``.
 
-        Si el comando tarda más de este umbral, `subprocess.run` lanza
-        `TimeoutExpired` y la herramienta devuelve un error al modelo.
+        Si el comando tarda más de este umbral, se termina el árbol
+        completo de procesos y la herramienta devuelve un error al modelo
+        (con la salida parcial, si la hay).
         """
         env_val = os.environ.get("HERCULES_COMMAND_TIMEOUT")
         if env_val:
@@ -1597,6 +1599,7 @@ class LLMConnector:
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]],
         tool_choice: Optional[str],
+        timeout: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Envía una solicitud HTTP al endpoint y devuelve la respuesta cruda."""
         url = f"{self.base_url}/chat/completions"
@@ -1627,7 +1630,8 @@ class LLMConnector:
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            effective_timeout = self.timeout if timeout is None else timeout
+            with urllib.request.urlopen(req, timeout=effective_timeout) as resp:
                 body = resp.read().decode("utf-8")
                 _log_llm_exchange("ENTRADA", url, body)
                 return json.loads(body)
@@ -1635,6 +1639,13 @@ class LLMConnector:
             detail = e.read().decode("utf-8", errors="replace")
             _log_llm_exchange("ENTRADA ERROR", url, detail)
             raise LLMError(f"HTTP {e.code} desde {url}: {detail}") from e
+        except TimeoutError as e:
+            # Timeout de lectura (el servidor aceptó la conexión pero no
+            # respondió a tiempo); urllib no lo envuelve en URLError.
+            _log_llm_exchange("ENTRADA ERROR", url, f"{type(e).__name__}: {e}")
+            raise LLMError(
+                f"Timeout ({effective_timeout:g}s) esperando respuesta de {url}"
+            ) from e
         except urllib.error.URLError as e:
             _log_llm_exchange("ENTRADA ERROR", url, f"{type(e).__name__}: {e.reason}")
             raise LLMError(f"No se pudo conectar con {url}: {e.reason}") from e
@@ -1648,6 +1659,7 @@ class LLMConnector:
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[str] = None,
+        timeout: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Envía una solicitud de chat y devuelve la respuesta cruda.
@@ -1658,11 +1670,28 @@ class LLMConnector:
 
         Las llamadas se serializan con un lock porque llama-cpp-python
         no es thread-safe (ver nota en __init__).
+
+        ``timeout`` (opcional) acota tanto la espera del lock como la
+        petición HTTP, para que una consulta abandonada por el llamador no
+        siga bloqueando a las demás. La inferencia local no es interrumpible.
         """
-        with self._lock:
+        if timeout is None:
+            acquired = self._lock.acquire()
+        else:
+            started = time.monotonic()
+            acquired = self._lock.acquire(timeout=timeout)
+            if not acquired:
+                raise LLMError(
+                    f"Timeout ({timeout:g}s) esperando a que el LLM quede libre"
+                )
+            timeout = max(0.1, timeout - (time.monotonic() - started))
+        try:
             if self.mode == "local":
                 return self._chat_local(messages, tools, tool_choice)
-            return self._chat_http(messages, tools, tool_choice)
+            return self._chat_http(messages, tools, tool_choice, timeout=timeout)
+        finally:
+            if acquired:
+                self._lock.release()
 
     @staticmethod
     def _extract_tool_calls_from_text(
@@ -2321,6 +2350,26 @@ def _is_command_safe(command: str) -> Tuple[bool, str]:
     
     return True, ""
 
+def _kill_process_tree(proc: "subprocess.Popen[str]") -> None:
+    """Termina un proceso y todos sus descendientes."""
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+            )
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        proc.kill()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def tool_execute_command(args: Dict[str, Any]) -> str:
     """
     Ejecuta un comando del sistema de forma restringida al workspace.
@@ -2335,26 +2384,53 @@ def tool_execute_command(args: Dict[str, Any]) -> str:
     if not safe:
         return f"ERROR: comando bloqueado por política de seguridad: {reason}"
 
+    popen_kwargs: Dict[str, Any] = {}
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        popen_kwargs["start_new_session"] = True
+
     try:
         # cwd restringido al workspace.
-        result = subprocess.run(
+        proc = subprocess.Popen(
             command,
             shell=True,
             cwd=str(WORKSPACE_DIR),
-            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=COMMAND_TIMEOUT,
+            **popen_kwargs,
         )
-    except subprocess.TimeoutExpired:
-        return f"ERROR: timeout ({COMMAND_TIMEOUT:g}s) ejecutando el comando"
     except Exception as e:  # noqa: BLE001
         return f"ERROR al ejecutar comando: {e}"
 
-    out = (result.stdout or "") + (result.stderr or "")
-    if not out:
-        out = f"(sin salida) código={result.returncode}"
+    timed_out = False
+    try:
+        stdout, stderr = proc.communicate(timeout=COMMAND_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        # Con shell=True, matar solo la shell deja huérfanos a los procesos
+        # hijos, que mantienen abiertas las tuberías y bloquean la lectura.
+        _kill_process_tree(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=5)
+        except Exception:  # noqa: BLE001
+            stdout, stderr = "", ""
+    except Exception as e:  # noqa: BLE001
+        _kill_process_tree(proc)
+        return f"ERROR al ejecutar comando: {e}"
+
+    out = (stdout or "") + (stderr or "")
+    if timed_out:
+        message = f"ERROR: timeout ({COMMAND_TIMEOUT:g}s) ejecutando el comando"
+        if out:
+            message += f"\nSalida parcial:\n{out}"
+        out = message
+    elif not out:
+        out = f"(sin salida) código={proc.returncode}"
     if len(out) > 20_000:
         out = out[:20_000] + "\n... [truncado]"
     return out
@@ -2809,14 +2885,10 @@ class PermissionManager:
 
         # Espera síncrona hasta que la UI resuelva la aprobación.
         # El timeout es una red de seguridad: la decisión real llega vía
-        # ``resolve()``. Si la preautorización está habilitada, el flujo
-        # preauth + decisión humana debería completarse en
-        # ``preauth_timeout + buffer``; si está deshabilitada, se mantiene
-        # el límite generoso de 10 minutos para decisión humana directa.
-        if CONFIG.preauth_fallback_to_human:
-            wait_timeout = max(60.0, float(CONFIG.preauth_timeout) + 30.0)
-        else:
-            wait_timeout = 600.0  # 10 minutos máximo.
+        # ``resolve()``. La espera incluye la posible preautorización del
+        # LLM (``preauth_timeout``) más 10 minutos para la decisión humana,
+        # que también puede quedar en cola detrás de otras aprobaciones.
+        wait_timeout = 600.0 + float(CONFIG.preauth_timeout) + 5.0
         deadline = time.monotonic() + wait_timeout
         while not event.wait(timeout=min(0.2, max(0.0, deadline - time.monotonic()))):
             if cancel_event is not None and cancel_event.is_set():
@@ -3511,6 +3583,14 @@ class Agent:
                     if tc.name in {"create_file", "edit_file", "write_file", "execute_command", "delete_file"} and result.success:
                         # refrescamos explorador de ficheros
                         self.ui_queue.put({"type": "refresh_file_browser", "task_id": task_id})
+                    if tc.name in {"create_file", "edit_file", "write_file"} and result.success:
+                        self.ui_queue.put(
+                            {
+                                "type": "show_file",
+                                "task_id": task_id,
+                                "path": str(tc.arguments.get("path", "")),
+                            }
+                        )
 
                 messages.extend(image_messages)
 
@@ -4194,15 +4274,16 @@ class Dashboard:
                     messages=[
                         {"role": "system", "content": system_msg},
                         {"role": "user", "content": user_msg},
-                    ]
+                    ],
+                    timeout=timeout_s,
                 )
             except BaseException as e:  # noqa: BLE001
                 error_holder["error"] = e
 
+        timeout_s = max(1.0, float(CONFIG.preauth_timeout))
         worker = threading.Thread(target=_call_llm, daemon=True)
         worker.start()
-        timeout_s = max(1.0, float(CONFIG.preauth_timeout))
-        worker.join(timeout=timeout_s)
+        worker.join(timeout=timeout_s + 1.0)
 
         if worker.is_alive():
             # El LLM no respondió a tiempo. Por seguridad, no preautorizar.

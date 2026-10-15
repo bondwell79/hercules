@@ -77,7 +77,6 @@ class QtDashboardLayoutTests(unittest.TestCase):
         self.assertIsInstance(columns, QSplitter)
         left, right = columns.widget(0), columns.widget(1)
         self.assertIsInstance(left, QSplitter)
-        self.assertIsInstance(right, QSplitter)
 
         self.assertEqual(
             [left.widget(i).title() for i in range(left.count())],
@@ -87,17 +86,14 @@ class QtDashboardLayoutTests(unittest.TestCase):
                 "Historial de tarea",
             ],
         )
-        self.assertEqual(
-            [right.widget(i).title() for i in range(right.count())],
-            ["Explorador del workspace", "Terminal y navegador"],
-        )
+        self.assertEqual(right.title(), "Terminal, navegador y explorador")
         self.assertIsInstance(self.window.workspace_tabs, QTabWidget)
         self.assertEqual(
             [
                 self.window.workspace_tabs.tabText(i)
                 for i in range(self.window.workspace_tabs.count())
             ],
-            ["Terminal de sistema", "Navegador web"],
+            ["Terminal de sistema", "Navegador web", "Explorador"],
         )
         self.assertIsInstance(self.window.terminal_view, QPlainTextEdit)
         self.assertTrue(self.window.terminal_view.isReadOnly())
@@ -127,6 +123,24 @@ class QtDashboardLayoutTests(unittest.TestCase):
         self.assertEqual(
             self.window.terminal_view.toPlainText(),
             f"{terminal_path}> echo prueba\nsalida del comando\n",
+        )
+
+    def test_written_file_is_shown_in_browser_tab(self):
+        target = self.window.workspace / "salida.txt"
+        target.write_text("hola", encoding="utf-8")
+        self.window.workspace_tabs.setCurrentIndex(0)
+
+        self.window.ui_queue.put(
+            {"type": "show_file", "task_id": 1, "path": "salida.txt"}
+        )
+        self.window._poll_queue()
+
+        browser_index = self.window.workspace_tabs.indexOf(
+            self.window.web_view.parentWidget()
+        )
+        self.assertEqual(self.window.workspace_tabs.currentIndex(), browser_index)
+        self.assertEqual(
+            self.window.web_view.url(), QUrl.fromLocalFile(str(target.resolve()))
         )
 
     def test_history_entries_keep_configured_event_colors(self):

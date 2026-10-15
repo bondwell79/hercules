@@ -477,12 +477,7 @@ class QtDashboard(QMainWindow):
         self._build_history_panel(left)
         left.setSizes([205, 275, 480])
 
-        right = QSplitter(Qt.Orientation.Vertical, columns)
-        right.setChildrenCollapsible(False)
-        columns.addWidget(right)
-        self._build_explorer_panel(right)
-        self._build_workspace_tools_panel(right)
-        right.setSizes([330, 620])
+        self._build_workspace_tools_panel(columns)
         columns.setSizes([650, 950])
 
         status = QWidget(self)
@@ -557,8 +552,8 @@ class QtDashboard(QMainWindow):
         layout.addWidget(self.history_view, 1)
         parent.addWidget(panel)
 
-    def _build_explorer_panel(self, parent: QWidget) -> None:
-        panel = QGroupBox("Explorador del workspace", parent)
+    def _build_explorer_panel(self, parent: QTabWidget) -> None:
+        panel = QWidget(parent)
         layout = QVBoxLayout(panel)
         toolbar = QHBoxLayout()
         self.path_label = QLabel(str(self.workspace), panel)
@@ -586,10 +581,10 @@ class QtDashboard(QMainWindow):
         self.file_tree.setColumnHidden(3, True)
         self.file_tree.doubleClicked.connect(self._open_file_from_tree)
         layout.addWidget(self.file_tree, 1)
-        parent.addWidget(panel)
+        parent.addTab(panel, "Explorador")
 
     def _build_workspace_tools_panel(self, parent: QWidget) -> None:
-        panel = QGroupBox("Terminal y navegador", parent)
+        panel = QGroupBox("Terminal, navegador y explorador", parent)
         layout = QVBoxLayout(panel)
 
         self.workspace_tabs = QTabWidget(panel)
@@ -640,6 +635,7 @@ class QtDashboard(QMainWindow):
         self.web_view = QWebEngineView(browser_page)
         browser_layout.addWidget(self.web_view, 1)
         self.workspace_tabs.addTab(browser_page, "Navegador web")
+        self._build_explorer_panel(self.workspace_tabs)
         layout.addWidget(self.workspace_tabs, 1)
         parent.addWidget(panel)
 
@@ -968,6 +964,8 @@ class QtDashboard(QMainWindow):
             self._finish_preauthorization(event)
         elif event_type == "refresh_file_browser":
             self._refresh_file_browser()
+        elif event_type == "show_file":
+            self._show_changed_file(str(event.get("path", "")))
         elif event_type == "terminal_command":
             terminal_path = str(self.workspace).replace("\\", "/")
             if len(terminal_path) > 1 and terminal_path[1] == ":":
@@ -1131,6 +1129,24 @@ class QtDashboard(QMainWindow):
             self._refresh_file_browser()
             return
         self._load_local_document(path)
+
+    def _show_changed_file(self, raw_path: str) -> None:
+        if not raw_path:
+            return
+        path = Path(raw_path)
+        if not path.is_absolute():
+            path = self.workspace / path
+        path = path.resolve()
+        if not _is_within_workspace(path, self.workspace) or not path.is_file():
+            return
+        self.workspace_tabs.setCurrentIndex(
+            self.workspace_tabs.indexOf(self.web_view.parentWidget())
+        )
+        url = QUrl.fromLocalFile(str(path))
+        if self.web_view.url() == url:
+            self.web_view.reload()
+        else:
+            self.web_view.setUrl(url)
 
     def _load_local_document(self, path: Path) -> None:
         if not path.is_file():

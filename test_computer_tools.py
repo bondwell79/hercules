@@ -7,6 +7,7 @@ import base64
 import random
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -192,15 +193,47 @@ class ToolTests(unittest.TestCase):
         self.assertIn("obligatorio", hercules.tool_search_in_files({"query": ""}))
 
     def test_execute_command(self) -> None:
-        with patch.object(hercules.subprocess, "run", return_value=Mock(stdout="command output", stderr="", returncode=0)) as run:
+        proc = Mock(returncode=0)
+        proc.communicate.return_value = ("command output", "")
+        with patch.object(hercules.subprocess, "Popen", return_value=proc) as popen:
             result = hercules.tool_execute_command({"command": "echo test"})
         self.assertEqual(result, "command output")
-        self.assertEqual(run.call_args.kwargs["cwd"], str(self.workspace))
+        self.assertEqual(popen.call_args.kwargs["cwd"], str(self.workspace))
         self.assertIn("obligatorio", hercules.tool_execute_command({"command": ""}))
-        with patch.object(hercules.subprocess, "run") as run:
+        with patch.object(hercules.subprocess, "Popen") as popen:
             blocked = hercules.tool_execute_command({"command": "shutdown /s"})
         self.assertIn("bloqueado", blocked)
-        run.assert_not_called()
+        popen.assert_not_called()
+
+    def test_llm_http_read_timeout_raises_llm_error(self) -> None:
+        import socket
+        import threading
+
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        self.addCleanup(server.close)
+        connections = []
+        threading.Thread(
+            target=lambda: connections.append(server.accept()), daemon=True
+        ).start()
+        llm = hercules.LLMConnector(
+            mode="http",
+            base_url=f"http://127.0.0.1:{server.getsockname()[1]}/v1",
+            timeout=1,
+        )
+        with self.assertRaises(hercules.LLMError) as ctx:
+            llm.chat([{"role": "user", "content": "x"}])
+        self.assertIn("Timeout", str(ctx.exception))
+
+    def test_execute_command_timeout_kills_process_tree(self) -> None:
+        with patch.object(hercules, "COMMAND_TIMEOUT", 1.0):
+            started = time.monotonic()
+            result = hercules.tool_execute_command(
+                {"command": f'"{sys.executable}" -c "import time; time.sleep(15)"'}
+            )
+        self.assertLess(time.monotonic() - started, 8)
+        self.assertIn("timeout (1s)", result)
 
     def test_delete_file(self) -> None:
         (self.workspace / "remove.txt").write_text("remove", encoding="utf-8")
