@@ -25,7 +25,6 @@ from __future__ import annotations
 import re
 import base64
 import configparser
-import ctypes
 import io
 import json
 import os
@@ -45,20 +44,6 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-
-def _set_process_dpi_aware() -> None:
-    """Fija la conciencia DPI antes de inicializar Qt o PyAutoGUI."""
-    if sys.platform != "win32":
-        return
-    try:
-        import ctypes
-
-        ctypes.windll.user32.SetProcessDPIAware()
-    except Exception:  # noqa: BLE001
-        pass
-
-
-_set_process_dpi_aware()
 
 from typing import Any, Callable, Dict, List, Optional, Tuple
 

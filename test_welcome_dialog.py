@@ -25,6 +25,7 @@ class WelcomeDialogTests(unittest.TestCase):
             CONFIG=types.SimpleNamespace(
                 ui_mono_font_family="Consolas",
                 ui_mono_font_size=12,
+                ui_fullscreen=True,
             ),
             WelcomeDialog=types.SimpleNamespace(ASCII_ART="HERCULES"),
             _load_welcome_pref=Mock(return_value=True),
@@ -34,6 +35,13 @@ class WelcomeDialogTests(unittest.TestCase):
 
         def execute_dialog(dialog):
             dialog_seen.append(dialog)
+            self.app.processEvents()
+            parent = dialog.parentWidget()
+            self.assertEqual(
+                dialog.frameGeometry().center(),
+                parent.frameGeometry().center(),
+            )
+            self.assertTrue(parent.isMaximized())
             checkbox = next(
                 item
                 for item in dialog.findChildren(QCheckBox)

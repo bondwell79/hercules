@@ -21,7 +21,9 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QSplitter,
+    QTabWidget,
 )
 
 
@@ -87,13 +89,92 @@ class QtDashboardLayoutTests(unittest.TestCase):
         )
         self.assertEqual(
             [right.widget(i).title() for i in range(right.count())],
-            ["Explorador del workspace", "Navegador web (Qt WebEngine / Chromium)"],
+            ["Explorador del workspace", "Terminal y navegador"],
         )
+        self.assertIsInstance(self.window.workspace_tabs, QTabWidget)
+        self.assertEqual(
+            [
+                self.window.workspace_tabs.tabText(i)
+                for i in range(self.window.workspace_tabs.count())
+            ],
+            ["Terminal de sistema", "Navegador web"],
+        )
+        self.assertIsInstance(self.window.terminal_view, QPlainTextEdit)
+        self.assertTrue(self.window.terminal_view.isReadOnly())
         self.assertTrue(
             self.window.web_view.settings().testAttribute(
                 QWebEngineSettings.WebAttribute.JavascriptEnabled
             )
         )
+
+    def test_command_tool_output_is_shown_without_rerunning_command(self):
+        calls = []
+        tool = types.SimpleNamespace(
+            runner=lambda arguments: calls.append(arguments) or "salida del comando\n"
+        )
+        self.window.tools = types.SimpleNamespace(get=lambda _name: tool)
+        self.window._monitor_command_tool()
+
+        arguments = {"command": "echo prueba"}
+        result = tool.runner(arguments)
+        self.window._poll_queue()
+
+        self.assertEqual(result, "salida del comando\n")
+        self.assertEqual(calls, [arguments])
+        terminal_path = str(self.window.workspace).replace("\\", "/")
+        if len(terminal_path) > 1 and terminal_path[1] == ":":
+            terminal_path = terminal_path[2:]
+        self.assertEqual(
+            self.window.terminal_view.toPlainText(),
+            f"{terminal_path}> echo prueba\nsalida del comando\n",
+        )
+
+    def test_history_entries_keep_configured_event_colors(self):
+        event = types.SimpleNamespace(
+            event_type=hercules.EventType.FINAL_ANSWER,
+            timestamp="2026-10-15 12:00:00",
+            content="Respuesta final de prueba",
+        )
+        task = types.SimpleNamespace(
+            id=1,
+            title="Tarea de prueba",
+            status=types.SimpleNamespace(value="COMPLETED"),
+            parent_task_id=None,
+        )
+        self.window.db.get_task = lambda _task_id: task
+        self.window.db.get_history = lambda _task_id: [event]
+
+        self.window._select_task(1)
+
+        answer = self.window.history_view.document().find("Respuesta final de prueba")
+        self.assertTrue(answer.isNull() is False)
+        self.assertEqual(
+            answer.charFormat().foreground().color().name(),
+            self.window.config.ui_final_answer_fg,
+        )
+
+    def test_command_execution_history_is_filtered(self):
+        command_call = types.SimpleNamespace(
+            event_type=hercules.EventType.TOOL_CALL,
+            content='Llamada a herramienta: execute_command\\nArgumentos: {"command": "echo prueba"}',
+        )
+        command_result = types.SimpleNamespace(
+            event_type=hercules.EventType.TOOL_RESULT,
+            content="[execute_command] OK\\nsalida del comando",
+        )
+        command_error = types.SimpleNamespace(
+            event_type=hercules.EventType.INFO,
+            content="[execute_command] AVISO\\ncomando bloqueado",
+        )
+        other_tool = types.SimpleNamespace(
+            event_type=hercules.EventType.TOOL_RESULT,
+            content="[read_file] OK\\ncontenido",
+        )
+
+        self.assertTrue(self.window._is_command_execution_history_entry(command_call))
+        self.assertTrue(self.window._is_command_execution_history_entry(command_result))
+        self.assertTrue(self.window._is_command_execution_history_entry(command_error))
+        self.assertFalse(self.window._is_command_execution_history_entry(other_tool))
 
     def test_webengine_executes_javascript(self):
         loop = QEventLoop()

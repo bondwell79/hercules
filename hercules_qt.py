@@ -18,6 +18,7 @@ from PySide6.QtGui import (
     QFont,
     QKeySequence,
     QShortcut,
+    QTextCharFormat,
     QTextCursor,
 )
 from PySide6.QtWidgets import (
@@ -365,6 +366,7 @@ class QtDashboard(QMainWindow):
         self.tools = core_module.ToolsRegistry()
         self.llm = core_module.LLMConnector()
         self.ui_queue: queue.Queue[Dict[str, Any]] = queue.Queue()
+        self._monitor_command_tool()
         self.permissions = core_module.PermissionManager(self.ui_queue)
         self.agent = core_module.Agent(
             self.db,
@@ -451,13 +453,11 @@ class QtDashboard(QMainWindow):
             QSplitter::handle {{ background: {self.config.ui_separator_color}; }}
             """
         )
-        if self.config.ui_fullscreen:
-            self.showMaximized()
         if hasattr(self, "setWindowOpacity"):
             self.setWindowOpacity(float(self.config.ui_window_alpha))
 
     def _build_layout(self) -> None:
-        menu = self.menuBar().addMenu("Hercules")
+        menu = self.menuBar().addMenu("(≡)")
         settings_action = QAction("Configuración…", self)
         settings_action.triggered.connect(self._open_settings)
         menu.addAction(settings_action)
@@ -481,7 +481,7 @@ class QtDashboard(QMainWindow):
         right.setChildrenCollapsible(False)
         columns.addWidget(right)
         self._build_explorer_panel(right)
-        self._build_browser_panel(right)
+        self._build_workspace_tools_panel(right)
         right.setSizes([330, 620])
         columns.setSizes([650, 950])
 
@@ -551,6 +551,9 @@ class QtDashboard(QMainWindow):
         self.history_view = QPlainTextEdit(panel)
         self.history_view.setReadOnly(True)
         self.history_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.history_view.setStyleSheet(
+            f"background: {self.config.ui_history_bg}; color: {self.config.ui_history_fg};"
+        )
         layout.addWidget(self.history_view, 1)
         parent.addWidget(panel)
 
@@ -585,30 +588,85 @@ class QtDashboard(QMainWindow):
         layout.addWidget(self.file_tree, 1)
         parent.addWidget(panel)
 
-    def _build_browser_panel(self, parent: QWidget) -> None:
-        panel = QGroupBox("Navegador web (Qt WebEngine / Chromium)", parent)
+    def _build_workspace_tools_panel(self, parent: QWidget) -> None:
+        panel = QGroupBox("Terminal y navegador", parent)
         layout = QVBoxLayout(panel)
+
+        self.workspace_tabs = QTabWidget(panel)
+        terminal_page = QWidget(self.workspace_tabs)
+        terminal_layout = QVBoxLayout(terminal_page)
+        self.terminal_view = QPlainTextEdit(terminal_page)
+        self.terminal_view.setReadOnly(True)
+        self.terminal_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.terminal_view.setMaximumBlockCount(5000)
+        self.terminal_view.setPlaceholderText(
+            "Aquí aparecerán los comandos del agente y la salida real de su ejecución."
+        )
+        terminal_toolbar = QHBoxLayout()
+        terminal_toolbar.addWidget(
+            QLabel(
+                "Comandos ejecutados por el agente y su salida",
+                terminal_page,
+            ),
+            1,
+        )
+        clear_terminal_button = QPushButton("Limpiar", terminal_page)
+        clear_terminal_button.clicked.connect(self.terminal_view.clear)
+        terminal_toolbar.addWidget(clear_terminal_button)
+        terminal_layout.addLayout(terminal_toolbar)
+        terminal_layout.addWidget(self.terminal_view, 1)
+        self.workspace_tabs.addTab(terminal_page, "Terminal de sistema")
+
+        browser_page = QWidget(self.workspace_tabs)
+        browser_layout = QVBoxLayout(browser_page)
         toolbar = QHBoxLayout()
-        self.back_button = QPushButton("←", panel)
+        self.back_button = QPushButton("←", browser_page)
         self.back_button.clicked.connect(self._browser_back)
         toolbar.addWidget(self.back_button)
-        self.forward_button = QPushButton("→", panel)
+        self.forward_button = QPushButton("→", browser_page)
         self.forward_button.clicked.connect(self._browser_forward)
         toolbar.addWidget(self.forward_button)
-        reload_button = QPushButton("↻", panel)
+        reload_button = QPushButton("↻", browser_page)
         reload_button.clicked.connect(self._browser_reload)
         toolbar.addWidget(reload_button)
-        self.address_bar = QLineEdit(panel)
+        self.address_bar = QLineEdit(browser_page)
         self.address_bar.setPlaceholderText("https://… o ruta local del workspace")
         self.address_bar.returnPressed.connect(self._navigate_to_address)
         toolbar.addWidget(self.address_bar, 1)
-        go_button = QPushButton("Ir", panel)
+        go_button = QPushButton("Ir", browser_page)
         go_button.clicked.connect(self._navigate_to_address)
         toolbar.addWidget(go_button)
-        layout.addLayout(toolbar)
-        self.web_view = QWebEngineView(panel)
-        layout.addWidget(self.web_view, 1)
+        browser_layout.addLayout(toolbar)
+        self.web_view = QWebEngineView(browser_page)
+        browser_layout.addWidget(self.web_view, 1)
+        self.workspace_tabs.addTab(browser_page, "Navegador web")
+        layout.addWidget(self.workspace_tabs, 1)
         parent.addWidget(panel)
+
+    def _monitor_command_tool(self) -> None:
+        get_tool = getattr(self.tools, "get", None)
+        if not callable(get_tool):
+            return
+        command_tool = get_tool("execute_command")
+        if command_tool is None:
+            return
+
+        original_runner = command_tool.runner
+
+        def monitored_runner(arguments: Dict[str, Any]) -> str:
+            command = str(arguments.get("command", ""))
+            self.ui_queue.put({"type": "terminal_command", "command": command})
+            try:
+                output = original_runner(arguments)
+            except Exception as exc:
+                self.ui_queue.put(
+                    {"type": "terminal_output", "output": f"ERROR: {exc}"}
+                )
+                raise
+            self.ui_queue.put({"type": "terminal_output", "output": output})
+            return output
+
+        command_tool.runner = monitored_runner
 
     def _setup_browser(self) -> None:
         profile = QWebEngineProfile.defaultProfile()
@@ -742,16 +800,52 @@ class QtDashboard(QMainWindow):
         self.history_title.setText(
             f"Tarea #{task.id} — {task.title} [{task.status.value}]{parent_suffix}"
         )
-        lines = []
+        cursor = self.history_view.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.Start)
+        cursor.select(QTextCursor.SelectionType.Document)
+        cursor.removeSelectedText()
+        colors = {
+            self.core.EventType.THOUGHT.value: ("ui_thought_fg", True),
+            self.core.EventType.TOOL_CALL.value: ("ui_tool_call_fg", False),
+            self.core.EventType.TOOL_RESULT.value: ("ui_tool_result_fg", False),
+            self.core.EventType.FINAL_ANSWER.value: ("ui_final_answer_fg", True),
+            self.core.EventType.ERROR.value: ("ui_error_fg", False),
+            self.core.EventType.STATUS_CHANGE.value: ("ui_status_change_fg", False),
+            self.core.EventType.INFO.value: ("ui_info_fg", False),
+            self.core.EventType.LOOP_DETECTED.value: ("ui_loop_detected_fg", False),
+            self.core.EventType.CONTEXT_COMPACTED.value: ("ui_context_compacted_fg", False),
+            self.core.EventType.CONTEXT_OVERFLOW.value: ("ui_context_overflow_fg", False),
+        }
         for entry in self.db.get_history(task_id):
-            label = self.core.EVENT_LABELS.get(
-                entry.event_type.value,
-                entry.event_type.value,
+            if self._is_command_execution_history_entry(entry):
+                continue
+            event_type = getattr(entry.event_type, "value", entry.event_type)
+            label = self.core.EVENT_LABELS.get(event_type, event_type)
+            color_key, bold = colors.get(event_type, ("ui_history_fg", False))
+            text_format = QTextCharFormat()
+            text_format.setForeground(QColor(getattr(self.config, color_key)))
+            text_format.setFontWeight(
+                QFont.Weight.Bold if bold else QFont.Weight.Normal
             )
-            lines.append(f"[{entry.timestamp}] {label}\n{entry.content}\n{'─' * 60}")
-        self.history_view.setPlainText("\n".join(lines))
+            cursor.insertText(
+                f"[{entry.timestamp}] {label}\n{entry.content}\n{'─' * 60}\n",
+                text_format,
+            )
+        self.history_view.setTextCursor(cursor)
         self.history_view.moveCursor(QTextCursor.MoveOperation.End)
         self._refresh_context_bar()
+
+    def _is_command_execution_history_entry(self, entry: Any) -> bool:
+        event_type = getattr(entry.event_type, "value", entry.event_type)
+        if event_type == self.core.EventType.TOOL_CALL.value:
+            return "execute_command" in str(entry.content)
+        if event_type not in {
+            self.core.EventType.TOOL_RESULT.value,
+            self.core.EventType.INFO.value,
+        }:
+            return False
+        content = str(entry.content)
+        return content.startswith("[execute_command]") or "[execute_command] " in content
 
     def _refresh_context_bar(self) -> None:
         usage = self._context_usage.get(self.selected_task_id or -1)
@@ -874,6 +968,16 @@ class QtDashboard(QMainWindow):
             self._finish_preauthorization(event)
         elif event_type == "refresh_file_browser":
             self._refresh_file_browser()
+        elif event_type == "terminal_command":
+            terminal_path = str(self.workspace).replace("\\", "/")
+            if len(terminal_path) > 1 and terminal_path[1] == ":":
+                terminal_path = terminal_path[2:]
+            self._append_terminal_text(
+                f"{terminal_path}> {event.get('command', '')}\n"
+            )
+        elif event_type == "terminal_output":
+            output = str(event.get("output", "")).rstrip("\r\n")
+            self._append_terminal_text(f"{output}\n")
         elif event_type == "orchestrator_finished":
             self._finish_task_thread()
         elif event_type == "orchestrator_error":
@@ -883,6 +987,11 @@ class QtDashboard(QMainWindow):
             )
         else:
             print(f"[ui] Evento desconocido: {event_type!r}")
+
+    def _append_terminal_text(self, text: str) -> None:
+        self.terminal_view.moveCursor(QTextCursor.MoveOperation.End)
+        self.terminal_view.insertPlainText(text)
+        self.terminal_view.moveCursor(QTextCursor.MoveOperation.End)
 
     def _show_approval(self, event: Dict[str, Any]) -> None:
         if self.config.no_authorization:
@@ -1141,7 +1250,11 @@ def main(core_module: Any) -> int:
         app = QApplication([])
     app.setApplicationName("Hercules")
     window = QtDashboard(core_module)
-    window.show()
+    if core_module.CONFIG.ui_fullscreen:
+        window.showMaximized()
+    else:
+        window.show()
+    app.processEvents()
     try:
         if core_module._load_welcome_pref():
             dialog = QDialog(window)
@@ -1180,6 +1293,13 @@ def main(core_module: Any) -> int:
             buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok, parent=dialog)
             buttons.accepted.connect(dialog.accept)
             layout.addWidget(buttons)
+            dialog.adjustSize()
+
+            def center_welcome_dialog() -> None:
+                offset = window.frameGeometry().center() - dialog.frameGeometry().center()
+                dialog.move(dialog.pos() + offset)
+
+            QTimer.singleShot(0, center_welcome_dialog)
             if dialog.exec() == QDialog.DialogCode.Accepted and dont_show.isChecked():
                 try:
                     core_module._save_welcome_pref(False)
