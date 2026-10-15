@@ -113,8 +113,13 @@ class QtDashboardLayoutTests(unittest.TestCase):
 
         arguments = {"command": "echo prueba"}
         result = tool.runner(arguments)
+        self.window.workspace_tabs.setCurrentIndex(1)
         self.window._poll_queue()
 
+        self.assertEqual(
+            self.window.workspace_tabs.currentIndex(),
+            self.window.workspace_tabs.indexOf(self.window.terminal_view.parentWidget()),
+        )
         self.assertEqual(result, "salida del comando\n")
         self.assertEqual(calls, [arguments])
         terminal_path = str(self.window.workspace).replace("\\", "/")

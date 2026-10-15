@@ -57,6 +57,9 @@ from PySide6.QtWebEngineCore import (
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
 
+APPROVAL_DISPLAY_MAX_CHARS = 255
+
+
 def _is_within_workspace(path: Path, workspace: Path) -> bool:
     try:
         path.resolve().relative_to(workspace.resolve())
@@ -967,6 +970,7 @@ class QtDashboard(QMainWindow):
         elif event_type == "show_file":
             self._show_changed_file(str(event.get("path", "")))
         elif event_type == "terminal_command":
+            self._activate_terminal()
             terminal_path = str(self.workspace).replace("\\", "/")
             if len(terminal_path) > 1 and terminal_path[1] == ":":
                 terminal_path = terminal_path[2:]
@@ -974,6 +978,7 @@ class QtDashboard(QMainWindow):
                 f"{terminal_path}> {event.get('command', '')}\n"
             )
         elif event_type == "terminal_output":
+            self._activate_terminal()
             output = str(event.get("output", "")).rstrip("\r\n")
             self._append_terminal_text(f"{output}\n")
         elif event_type == "orchestrator_finished":
@@ -985,6 +990,11 @@ class QtDashboard(QMainWindow):
             )
         else:
             print(f"[ui] Evento desconocido: {event_type!r}")
+
+    def _activate_terminal(self) -> None:
+        terminal_index = self.workspace_tabs.indexOf(self.terminal_view.parentWidget())
+        if terminal_index >= 0:
+            self.workspace_tabs.setCurrentIndex(terminal_index)
 
     def _append_terminal_text(self, text: str) -> None:
         self.terminal_view.moveCursor(QTextCursor.MoveOperation.End)
@@ -1076,6 +1086,8 @@ class QtDashboard(QMainWindow):
             f"Argumentos:\n"
             f"{self.core._format_approval_args(event['tool_name'], event.get('arguments', {}))}"
         )
+        if len(description) > APPROVAL_DISPLAY_MAX_CHARS:
+            description = description[: APPROVAL_DISPLAY_MAX_CHARS - 1] + "…"
         answer = QMessageBox(self)
         answer.setWindowTitle("Aprobación requerida")
         answer.setIcon(QMessageBox.Icon.Warning)
