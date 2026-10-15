@@ -828,7 +828,7 @@ class QtDashboard(QMainWindow):
                 QFont.Weight.Bold if bold else QFont.Weight.Normal
             )
             cursor.insertText(
-                f"[{entry.timestamp}] {label}\n{entry.content}\n{'─' * 60}\n",
+                f"[{entry.timestamp}] {label}\n{entry.content}\n\n",
                 text_format,
             )
         self.history_view.setTextCursor(cursor)
