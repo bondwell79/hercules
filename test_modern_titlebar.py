@@ -9,7 +9,7 @@ os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu --no-sandbox"
 
 import hercules
 from hercules_qt import SettingsDialog
-from PySide6.QtWidgets import QApplication, QComboBox
+from PySide6.QtWidgets import QApplication
 
 
 class TitlebarSettingsTests(unittest.TestCase):
@@ -21,13 +21,15 @@ class TitlebarSettingsTests(unittest.TestCase):
         dialog = SettingsDialog(hercules, None)
         self.addCleanup(dialog.close)
 
-        field = dialog._fields[("UI", "titlebar_style")]
-        self.assertIsInstance(field, QComboBox)
+        self.assertNotIn(("UI", "titlebar_style"), dialog._fields)
         self.assertEqual(
-            [field.itemText(index) for index in range(field.count())],
-            ["system", "dark", "accent", "custom"],
+            [
+                dialog._fields[("UI", "theme")].itemData(index)
+                for index in range(dialog._fields[("UI", "theme")].count())
+            ],
+            list(dialog.THEMES),
         )
-        self.assertIn(field.currentText(), {"system", "dark", "accent", "custom"})
+        self.assertEqual(dialog._fields[("UI", "theme")].count(), 7)
 
 
 if __name__ == "__main__":

@@ -302,6 +302,39 @@ class QtDashboardLayoutTests(unittest.TestCase):
         self.addCleanup(dialog.close)
 
         self.assertEqual(dialog.tabs.count(), len(config._parser.sections()) + 1)
+        self.assertNotIn("Workspace", dialog.SECTION_TITLES)
+        self.assertNotIn("Database", dialog.SECTION_TITLES)
+        self.assertNotIn("Database", [dialog.tabs.tabText(i) for i in range(dialog.tabs.count())])
+        self.assertIsInstance(dialog._fields[("Agent", "workspace_path")], QLineEdit)
+        self.assertIsInstance(dialog._fields[("LLM", "database_path")], QLineEdit)
+        self.assertEqual(dialog._fields[("LLM", "database_path")].text(), "hercules.db")
+        self.assertEqual(
+            sum(1 for key in dialog._fields if key == ("LLM", "database_path")), 1
+        )
+        theme = dialog._fields[("UI", "theme")]
+        self.assertIsInstance(theme, QComboBox)
+        self.assertEqual(theme.count(), 7)
+        self.assertEqual(theme.currentData(), "dark")
+        ui_tab_index = next(
+            index
+            for index in range(dialog.tabs.count())
+            if dialog.tabs.tabText(index) == dialog.SECTION_TITLES["UI"]
+        )
+        ui_form = dialog.tabs.widget(ui_tab_index).widget().layout()
+        ui_labels = [
+            ui_form.itemAt(row, QFormLayout.ItemRole.LabelRole).widget().text()
+            for row in range(ui_form.rowCount())
+            if ui_form.itemAt(row, QFormLayout.ItemRole.LabelRole) is not None
+        ]
+        self.assertEqual(
+            ui_labels,
+            ["Tema", "Iniciar en pantalla completa", "Tipografía", "Tamaño de fuente"],
+        )
+        self.assertIsNotNone(dialog._theme_preview)
+        self.assertIn("Vista previa", dialog._theme_preview.title())
+        self.assertEqual(dialog._theme_preview_label.text(), "Así se verá el texto con el tema y la tipografía seleccionados.")
+        self.assertEqual(dialog._theme_preview_button.text(), "Botón de ejemplo")
+        self.assertNotIn("bg_color", ui_labels)
         self.assertEqual(
             dialog.tabs.tabText(dialog.tabs.count() - 1),
             dialog.SUBTASKS_TAB_TITLE,
@@ -339,12 +372,16 @@ class QtDashboardLayoutTests(unittest.TestCase):
         )
 
         dialog._fields[("UI", "fullscreen")].setCurrentText("false")
+        theme.setCurrentIndex(theme.findData("ocean"))
         dialog.subtasks_edit.setPlainText(
             "[ANALIZAR]\\nprompt = Analiza la petición\\n\\n[IMPLEMENTAR]\\n"
             "prompt = Ejecuta el plan\\n"
         )
         with patch("hercules_qt.QMessageBox.information"):
             dialog._save()
+        saved_config = hercules.Config(str(config_path))
+        self.assertEqual(saved_config._parser.get("UI", "theme"), "ocean")
+        self.assertEqual(saved_config._parser.get("UI", "bg_color"), "#081521")
         self.assertEqual(
             subtasks_path.read_text(encoding="utf-8"),
             "[ANALIZAR]\\nprompt = Analiza la petición\\n\\n[IMPLEMENTAR]\\n"
@@ -355,6 +392,19 @@ class QtDashboardLayoutTests(unittest.TestCase):
         self.assertIn("fullscreen = false", saved)
         self.assertIn("; Select local or HTTP mode", saved)
         self.assertIn("mode = http", saved)
+
+    def test_configuration_sections_are_not_migrated(self):
+        config_path = Path(self.workspace_dir.name) / "old-config.ini"
+        config_path.write_text(
+            "[Workspace]\npath = ./old-workspace\n"
+            "[Database]\npath = old.db\n",
+            encoding="utf-8",
+        )
+        config = hercules.Config(str(config_path))
+        self.assertEqual(config.workspace_path, "./workspace")
+        self.assertEqual(config.db_path, "hercules.db")
+        self.assertEqual(config._parser.get("Agent", "workspace_path"), "./workspace")
+        self.assertEqual(config._parser.get("LLM", "database_path"), "hercules.db")
 
 
 if __name__ == "__main__":

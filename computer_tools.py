@@ -68,3 +68,32 @@ def mouse_move(x: int, y: int, duration: float = 0.0) -> str:
 
     _get_pyautogui().moveTo(x=x, y=y, duration=duration)
     return f"Puntero movido a ({x}, {y})."
+
+
+def keyboard_type_text(text: str, interval: float = 0.0) -> str:
+    """Escribe texto en el control que tenga el foco."""
+    if not isinstance(text, str):
+        raise ValueError("text debe ser una cadena")
+    if isinstance(interval, bool) or not isinstance(interval, (int, float)):
+        raise ValueError("interval debe ser un número no negativo")
+    if not math.isfinite(interval) or interval < 0:
+        raise ValueError("interval debe ser un número finito no negativo")
+
+    _get_pyautogui().write(text, interval=interval)
+    return f"Texto escrito en el foco actual ({len(text)} caracteres)."
+
+
+def keyboard_press_keys(keys: list[str]) -> str:
+    """Pulsa una tecla o combinación de teclas en el foco actual."""
+    if not isinstance(keys, (list, tuple)) or not keys:
+        raise ValueError("keys debe ser una lista no vacía de nombres de teclas")
+    if any(not isinstance(key, str) or not key for key in keys):
+        raise ValueError("cada tecla debe ser una cadena no vacía")
+
+    pyautogui = _get_pyautogui()
+    if len(keys) == 1:
+        pyautogui.press(keys[0])
+        return f"Tecla pulsada: {keys[0]}."
+
+    pyautogui.hotkey(*keys)
+    return f"Combinación de teclas pulsada: {' + '.join(keys)}."

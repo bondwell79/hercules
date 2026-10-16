@@ -178,12 +178,9 @@ class Config:
             "n_ctx": "8192",
             "n_threads": "8",
             "n_gpu_layers": "0",
-        },
-        "Workspace": {
-            "path": "./workspace",
-        },
-        "Database": {
-            "path": "hercules.db",
+            "database_path": "hercules.db",
+            "font_family": "Segoe UI",
+            "font_size": "10",
         },
         "Agent": {
             "max_iterations": "10",
@@ -193,9 +190,11 @@ class Config:
             "preauth_fallback_to_human": "true",
             "no_authorization": "false",
             "command_timeout": "120",
+            "workspace_path": "./workspace",
         },
         "UI": {
             "fullscreen": "false",
+            "theme": "dark",
             "bg_color": "#0f1115",
             "fg_color": "#e6e8eb",
             "frame_bg": "#14171c",
@@ -378,14 +377,14 @@ class Config:
     @property
     def workspace_path(self) -> str:
         return os.environ.get(
-            "HERCULES_WORKSPACE", self._parser.get("Workspace", "path")
+            "HERCULES_WORKSPACE", self._parser.get("Agent", "workspace_path")
         )
 
     # --- Database ---
 
     @property
     def db_path(self) -> str:
-        return os.environ.get("HERCULES_DB", self._parser.get("Database", "path"))
+        return os.environ.get("HERCULES_DB", self._parser.get("LLM", "database_path"))
 
     # --- Agent ---
 
@@ -2161,6 +2160,16 @@ def tool_mouse_move(args: Dict[str, Any]) -> str:
     )
 
 
+def tool_keyboard_type_text(args: Dict[str, Any]) -> str:
+    return computer_tools.keyboard_type_text(
+        text=args["text"], interval=args.get("interval", 0.0)
+    )
+
+
+def tool_keyboard_press_keys(args: Dict[str, Any]) -> str:
+    return computer_tools.keyboard_press_keys(keys=args["keys"])
+
+
 def tool_write_file(args: Dict[str, Any]) -> str:
     path = _resolve_workspace_path(args.get("path", ""))
     content = args.get("content", "")
@@ -2600,6 +2609,53 @@ class ToolsRegistry:
                     "required": ["x", "y"],
                 },
                 runner=tool_mouse_move,
+            )
+        )
+        self.register(
+            ToolDefinition(
+                name="keyboard_type_text",
+                description=(
+                    "Escribe texto en el elemento que tenga el foco del teclado. "
+                    "Argumentos: text; interval (pausa en segundos entre teclas, por defecto 0)."
+                ),
+                risk=RiskLevel.SAFE,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string", "description": "Texto que se escribirá."},
+                        "interval": {
+                            "type": "number",
+                            "minimum": 0,
+                            "description": "Pausa en segundos entre pulsaciones (opcional).",
+                        },
+                    },
+                    "required": ["text"],
+                },
+                runner=tool_keyboard_type_text,
+            )
+        )
+        self.register(
+            ToolDefinition(
+                name="keyboard_press_keys",
+                description=(
+                    "Pulsa una tecla o una combinación en el elemento que tenga el foco. "
+                    "Argumento keys: lista de nombres de teclas de PyAutoGUI; "
+                    "por ejemplo [\"enter\"] o [\"ctrl\", \"s\"]."
+                ),
+                risk=RiskLevel.SAFE,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "keys": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 1,
+                            "description": "Una tecla o combinación de teclas.",
+                        }
+                    },
+                    "required": ["keys"],
+                },
+                runner=tool_keyboard_press_keys,
             )
         )
         self.register(

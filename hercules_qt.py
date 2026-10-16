@@ -18,6 +18,7 @@ from PySide6.QtGui import (
     QConicalGradient,
     QDesktopServices,
     QFont,
+    QFontDatabase,
     QKeySequence,
     QPainter,
     QPainterPath,
@@ -127,12 +128,53 @@ class WorkspaceWebPage(QWebEnginePage):
 class SettingsDialog(QDialog):
     SECTION_TITLES = {
         "LLM": "🧠 LLM",
-        "Workspace": "📁 Workspace",
-        "Database": "🗄 Base de datos",
         "Agent": "🤖 Agente",
         "UI": "🎨 Interfaz",
     }
     SUBTASKS_TAB_TITLE = "🔀 Subtareas"
+    THEMES = {
+        "dark": "Modo dark",
+        "ocean": "Modo ocean",
+        "green": "Modo green",
+        "retro": "Modo retro",
+        "windows": "Modo windows",
+        "mac": "Modo mac",
+        "black&white": "Modo black&white",
+    }
+    THEME_ROLES = {
+        "background": ("bg_color", "frame_bg", "prompt_bg", "history_bg", "approval_bg", "approval_request_bg", "approval_granted_bg", "approval_denied_bg", "browser_header_bg", "scrollbar_trough", "tab_bg", "context_bar_bg"),
+        "surface": ("card_bg", "browser_bg", "checkbox_bg", "tab_selected_bg"),
+        "raised": ("button_bg",),
+        "text": ("fg_color", "prompt_fg", "browser_fg", "button_fg", "checkbox_fg", "tab_selected_fg", "approval_request_fg"),
+        "soft_text": ("history_fg", "tab_fg", "scrollbar_arrow", "status_change_fg", "status_pending"),
+        "border": ("browser_border", "separator_color", "card_border_color"),
+        "selection": ("browser_selected_bg",),
+        "selection_text": ("browser_selected_fg",),
+        "accent": ("accent_color", "button_accent_bg", "tab_hover_bg", "status_in_progress", "tool_call_fg", "loop_detected_fg", "context_compacted_fg"),
+        "accent_text": ("button_accent_fg",),
+        "accent_hover": ("button_accent_hover_bg",),
+        "accent_pressed": ("button_accent_pressed_bg", "button_pressed_bg"),
+        "success": ("approval_fg", "approval_granted_fg", "final_answer_fg", "status_completed", "context_bar_low"),
+        "warning": ("approval_denied_fg", "info_fg", "thought_fg", "status_awaiting_approval", "context_bar_medium"),
+        "danger": ("error_fg", "context_overflow_fg", "status_failed", "button_danger_bg"),
+        "danger_text": ("button_danger_fg",),
+        "danger_hover": ("button_danger_hover_bg",),
+        "danger_pressed": ("button_danger_pressed_bg",),
+        "secondary": ("tool_result_fg", "status_cancelled", "context_bar_high"),
+        "hover": ("button_hover_bg", "scrollbar_thumb_hover"),
+        "scrollbar": ("scrollbar_thumb",),
+        "titlebar": ("titlebar_color",),
+        "titlebar_text": ("titlebar_text_color",),
+    }
+    THEME_PALETTES = {
+        "dark": {"background": "#0f1115", "surface": "#1a1d23", "raised": "#272b33", "text": "#e6e8eb", "soft_text": "#9ca3af", "border": "#2a2e37", "selection": "#1e3a5f", "selection_text": "#ffffff", "accent": "#60a5fa", "accent_text": "#ffffff", "accent_hover": "#60a5fa", "accent_pressed": "#2563eb", "success": "#4ade80", "warning": "#fbbf24", "danger": "#f87171", "danger_text": "#ffffff", "danger_hover": "#ef4444", "danger_pressed": "#b91c1c", "secondary": "#5eead4", "hover": "#343944", "scrollbar": "#3a3f4b", "titlebar": "#0f1115", "titlebar_text": "#e6e8eb"},
+        "ocean": {"background": "#081521", "surface": "#102536", "raised": "#18384d", "text": "#e4f4fb", "soft_text": "#9bb9c8", "border": "#25485d", "selection": "#155e75", "selection_text": "#f0fdff", "accent": "#38bdf8", "accent_text": "#062033", "accent_hover": "#7dd3fc", "accent_pressed": "#0284c7", "success": "#5eead4", "warning": "#fbbf24", "danger": "#fb7185", "danger_text": "#ffffff", "danger_hover": "#fda4af", "danger_pressed": "#be123c", "secondary": "#a5f3fc", "hover": "#24516a", "scrollbar": "#326078", "titlebar": "#081521", "titlebar_text": "#e4f4fb"},
+        "green": {"background": "#17231e", "surface": "#22332b", "raised": "#34483d", "text": "#e8f2eb", "soft_text": "#b1c5b7", "border": "#42594a", "selection": "#547b63", "selection_text": "#ffffff", "accent": "#9ac7a7", "accent_text": "#183123", "accent_hover": "#b9d9c2", "accent_pressed": "#6fa982", "success": "#a8d5a2", "warning": "#e8c98a", "danger": "#d98e8e", "danger_text": "#ffffff", "danger_hover": "#e9aaaa", "danger_pressed": "#a85f66", "secondary": "#a7c9bd", "hover": "#40574a", "scrollbar": "#60796a", "titlebar": "#17231e", "titlebar_text": "#e8f2eb"},
+        "retro": {"background": "#160d26", "surface": "#24143b", "raised": "#351c50", "text": "#fff1fa", "soft_text": "#c4a8d8", "border": "#56336d", "selection": "#5b1b75", "selection_text": "#ffffff", "accent": "#00f5d4", "accent_text": "#120d27", "accent_hover": "#7bffeb", "accent_pressed": "#00bfa5", "success": "#a8ff60", "warning": "#ffe347", "danger": "#ff4fa3", "danger_text": "#ffffff", "danger_hover": "#ff83bd", "danger_pressed": "#c21870", "secondary": "#ff79c6", "hover": "#482461", "scrollbar": "#70428a", "titlebar": "#160d26", "titlebar_text": "#fff1fa"},
+        "windows": {"background": "#c0c0c0", "surface": "#d4d0c8", "raised": "#c0c0c0", "text": "#000000", "soft_text": "#404040", "border": "#808080", "selection": "#000080", "selection_text": "#ffffff", "accent": "#000080", "accent_text": "#ffffff", "accent_hover": "#0000a0", "accent_pressed": "#000060", "success": "#008000", "warning": "#808000", "danger": "#800000", "danger_text": "#ffffff", "danger_hover": "#a00000", "danger_pressed": "#600000", "secondary": "#008080", "hover": "#d4d0c8", "scrollbar": "#808080", "titlebar": "#000080", "titlebar_text": "#ffffff"},
+        "mac": {"background": "#d8d8d8", "surface": "#eeeeee", "raised": "#d0d0d0", "text": "#222222", "soft_text": "#666666", "border": "#a0a0a0", "selection": "#3875d7", "selection_text": "#ffffff", "accent": "#6b8fc9", "accent_text": "#ffffff", "accent_hover": "#8eacd9", "accent_pressed": "#4e70aa", "success": "#5a9b68", "warning": "#d19a45", "danger": "#c65d5d", "danger_text": "#ffffff", "danger_hover": "#dc7777", "danger_pressed": "#a94343", "secondary": "#7a9d9b", "hover": "#e4e4e4", "scrollbar": "#aaaaaa", "titlebar": "#c8c8c8", "titlebar_text": "#222222"},
+        "black&white": {"background": "#101010", "surface": "#202020", "raised": "#303030", "text": "#f2f2f2", "soft_text": "#b0b0b0", "border": "#505050", "selection": "#707070", "selection_text": "#ffffff", "accent": "#b8b8b8", "accent_text": "#101010", "accent_hover": "#d0d0d0", "accent_pressed": "#888888", "success": "#d0d0d0", "warning": "#aaaaaa", "danger": "#888888", "danger_text": "#ffffff", "danger_hover": "#a0a0a0", "danger_pressed": "#606060", "secondary": "#c0c0c0", "hover": "#404040", "scrollbar": "#686868", "titlebar": "#101010", "titlebar_text": "#f2f2f2"},
+    }
     CHOICES = {
         ("LLM", "mode"): ("local", "http"),
         ("UI", "titlebar_style"): ("system", "dark", "accent", "custom"),
@@ -148,6 +190,9 @@ class SettingsDialog(QDialog):
         )
         self._fields: Dict[tuple[str, str], QWidget] = {}
         self._initial: Dict[tuple[str, str], str] = {}
+        self._theme_preview: Optional[QGroupBox] = None
+        self._theme_preview_label: Optional[QLabel] = None
+        self._theme_preview_button: Optional[QPushButton] = None
         self.setWindowTitle("Configuración de Hercules")
         self.resize(820, 680)
         self.setMinimumSize(600, 420)
@@ -185,8 +230,14 @@ class SettingsDialog(QDialog):
     def _build_tabs(self) -> None:
         scanned = self.core._scan_config_file(str(self.config_path))
         parser = self.config._parser
-        sections = [section for section in self.SECTION_TITLES if parser.has_section(section)]
-        sections.extend(section for section in parser.sections() if section not in sections)
+        sections = [
+            section for section in self.SECTION_TITLES if parser.has_section(section)
+        ]
+        sections.extend(
+            section
+            for section in parser.sections()
+            if section not in sections and section not in {"Database", "Workspace"}
+        )
 
         for section in sections:
             descriptions: Dict[str, str] = {}
@@ -194,12 +245,41 @@ class SettingsDialog(QDialog):
                 descriptions.setdefault(key, description)
             keys = list(descriptions)
             keys.extend(key for key in parser.options(section) if key not in descriptions)
+            if section == "LLM" and "database_path" not in keys:
+                keys.insert(0, "database_path")
+            elif section == "UI":
+                keys = [
+                    "theme",
+                    "fullscreen",
+                    "font_family",
+                    "font_size",
+                ]
 
             form = QFormLayout()
             form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
             form.setLabelAlignment(Qt.AlignmentFlag.AlignTop)
             for key in keys:
                 self._add_setting(form, section, key, descriptions.get(key, ""))
+                if section == "UI" and key == "font_family":
+                    field = self._fields[("UI", "font_family")]
+                    signal = (
+                        field.currentTextChanged
+                        if isinstance(field, QComboBox)
+                        else field.textChanged
+                    )
+                    signal.connect(self._update_preview_font)
+                elif section == "UI" and key == "font_size":
+                    field = self._fields[("UI", "font_size")]
+                    signal = (
+                        field.currentTextChanged
+                        if isinstance(field, QComboBox)
+                        else field.textChanged
+                    )
+                    signal.connect(self._update_preview_font)
+
+            if section == "UI":
+                preview = self._build_theme_preview()
+                form.addRow(preview)
 
             body = QWidget(self.tabs)
             body.setLayout(form)
@@ -207,6 +287,50 @@ class SettingsDialog(QDialog):
             scroll.setWidgetResizable(True)
             scroll.setWidget(body)
             self.tabs.addTab(scroll, self.SECTION_TITLES.get(section, section))
+
+    def _build_theme_preview(self) -> QGroupBox:
+        preview = QGroupBox("Vista previa", self.tabs)
+        layout = QVBoxLayout(preview)
+        self._theme_preview = preview
+        self._theme_preview_label = QLabel(
+            "Así se verá el texto con el tema y la tipografía seleccionados.", preview
+        )
+        self._theme_preview_label.setWordWrap(True)
+        layout.addWidget(self._theme_preview_label)
+        self._theme_preview_button = QPushButton("Botón de ejemplo", preview)
+        layout.addWidget(self._theme_preview_button)
+
+        self._fields[("UI", "theme")].currentIndexChanged.connect(
+            self._update_theme_preview
+        )
+        self._update_theme_preview()
+        self._update_preview_font()
+        return preview
+
+    def _update_theme_preview(self) -> None:
+        if not self._theme_preview:
+            return
+        theme = self._field_value(self._fields[("UI", "theme")])
+        palette = self.THEME_PALETTES.get(theme, self.THEME_PALETTES["dark"])
+        self._theme_preview.setStyleSheet(
+            f"QGroupBox {{ background: {palette['surface']}; color: {palette['text']}; "
+            f"border: 1px solid {palette['border']}; border-radius: 6px; margin-top: 8px; }} "
+            f"QLabel {{ background: transparent; color: {palette['text']}; }} "
+            f"QPushButton {{ background: {palette['accent']}; color: {palette['accent_text']}; "
+            "border: 0; border-radius: 4px; padding: 6px 12px; }"
+        )
+
+    def _update_preview_font(self, *_args: Any) -> None:
+        if not self._theme_preview_label:
+            return
+        family = self._field_value(self._fields[("UI", "font_family")])
+        try:
+            size = int(self._field_value(self._fields[("UI", "font_size")]))
+        except ValueError:
+            size = self.config.ui_font_size
+        font = QFont(family, size)
+        self._theme_preview_label.setFont(font)
+        self._theme_preview_button.setFont(font)
 
     def _build_subtasks_tab(self) -> None:
         try:
@@ -245,9 +369,24 @@ class SettingsDialog(QDialog):
         self._initial[field_key] = value
         default = self.core.Config.DEFAULTS.get(section, {}).get(key, "")
 
-        label = QLabel(key)
+        setting_labels = {
+            ("LLM", "database_path"): "Base de datos",
+            ("UI", "theme"): "Tema",
+            ("UI", "fullscreen"): "Iniciar en pantalla completa",
+            ("UI", "font_family"): "Tipografía",
+            ("UI", "font_size"): "Tamaño de fuente",
+        }
+        label = QLabel(setting_labels.get(field_key, key))
         label.setToolTip(description)
         choices = self.CHOICES.get(field_key)
+        if field_key == ("UI", "theme"):
+            choices = tuple(self.THEMES)
+        elif field_key == ("UI", "font_family"):
+            choices = tuple(QFontDatabase.families())
+        elif field_key == ("UI", "font_size"):
+            choices = tuple(str(size) for size in range(8, 25))
+        elif field_key == ("LLM", "database_path"):
+            choices = None
         if choices is None and (
             default.lower() in {"true", "false"}
             or value.lower() in {"true", "false"}
@@ -256,17 +395,24 @@ class SettingsDialog(QDialog):
 
         if choices:
             field = QComboBox()
-            field.addItems(choices)
-            current_index = field.findText(value, Qt.MatchFlag.MatchFixedString)
+            if field_key == ("UI", "theme"):
+                for theme, title in self.THEMES.items():
+                    field.addItem(title, theme)
+                current_index = field.findData(value)
+            else:
+                field.addItems(choices)
+                current_index = field.findText(value, Qt.MatchFlag.MatchFixedString)
             if current_index >= 0:
                 field.setCurrentIndex(current_index)
-            else:
+            elif field_key != ("UI", "theme"):
                 field.setCurrentText(value)
         else:
             field = QLineEdit(value)
             if key == "api_key":
                 field.setEchoMode(QLineEdit.EchoMode.Password)
         field.setToolTip(description)
+        if field_key == ("UI", "theme"):
+            field.setProperty("setting_key", "theme")
 
         self._fields[field_key] = field
         if isinstance(field, QLineEdit) and (
@@ -324,6 +470,8 @@ class SettingsDialog(QDialog):
 
     def _field_value(self, field: QWidget) -> str:
         if isinstance(field, QComboBox):
+            if field.property("setting_key") == "theme":
+                return str(field.currentData())
             return field.currentText().strip()
         if isinstance(field, QLineEdit):
             return field.text().strip()
@@ -370,6 +518,15 @@ class SettingsDialog(QDialog):
                 )
                 return
             updates.setdefault(section, {})[key] = value
+            if (section, key) == ("UI", "theme"):
+                palette = self.THEME_PALETTES.get(value)
+                if palette:
+                    ui_defaults = self.core.Config.DEFAULTS.get("UI", {})
+                    for role, keys in self.THEME_ROLES.items():
+                        color = palette[role]
+                        for color_key in keys:
+                            if color_key in ui_defaults:
+                                updates.setdefault("UI", {})[color_key] = color
 
         subtasks_text = self.subtasks_edit.toPlainText()
         subtasks_changed = subtasks_text != self._initial_subtasks
@@ -526,8 +683,10 @@ class QtDashboard(QMainWindow):
             from PySide6.QtGui import QIcon
 
             self.setWindowIcon(QIcon(str(icon_path)))
-        font = QFont(self.config.ui_font_family, self.config.ui_font_size)
-        self.setFont(font)
+        self._application_font = QFont(
+            self.config.ui_font_family, self.config.ui_font_size
+        )
+        self.setFont(self._application_font)
         self.setStyleSheet(
             f"""
             QMainWindow, QWidget {{ background: {self.config.ui_frame_bg}; color: {self.config.ui_fg_color}; }}

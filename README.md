@@ -32,6 +32,8 @@ get_current_time	SAFE	Devuelve la fecha y hora UTC actuales.
 take_screenshot	    SAFE	Captura la pantalla y guarda la imagen PNG en el workspace.
 mouse_click	        SAFE	Hace uno o más clics en unas coordenadas de pantalla.
 mouse_move	        SAFE	Mueve el puntero a unas coordenadas de pantalla.
+keyboard_type_text	SAFE	Escribe texto en el elemento que tiene el foco.
+keyboard_press_keys	SAFE	Pulsa una tecla o combinación de teclas en el foco actual.
 write_file	        SAFE	Escribe contenido en un archivo; puede sobrescribir uno existente.
 create_file	        SAFE	Crea un archivo nuevo sin sobrescribir uno existente.
 edit_file	        SAFE	Reemplaza una coincidencia de texto en un archivo; también puede sustituir todo su contenido.
@@ -55,7 +57,7 @@ al workspace.
 - Python 3.11 o superior
 - PySide6 y PySide6-WebEngine (se instalan desde `requirements.txt`)
 - Creado para windows pero compatible con linux.
-- Opcional: `pyautogui` (para las herramientas autorizadas de captura de pantalla y ratón; instalar con `python -m pip install pyautogui`).
+- Opcional: `pyautogui` (para las herramientas autorizadas de captura de pantalla, ratón y teclado; instalar con `python -m pip install pyautogui`).
 - Opcional: `llama-cpp-python` (solo para modo local)
 - Opcional: un modelo GGUF (ver carpeta `modelos/`)
 
@@ -72,7 +74,7 @@ En OS Windows se recomienda usar el script específico de arranque:
 
 Usar el script `run.bat`, que activa el entorno virtual y lanza `hercules.py`.
 
-El fichero `config.ini` ya viene incluido con valores por defecto; edítalo para ajustar la ruta del modelo GGUF, el modo del LLM (`local` / `http`) y otros parámetros.
+El fichero `config.ini` ya viene incluido con valores por defecto; edítalo para ajustar la ruta del modelo GGUF, el modo del LLM (`local` / `http`) y otros parámetros. En el menú de configuración puedes cambiar el tema, la pantalla completa y la tipografía, y comprobarlos en la vista previa de Interfaz.
 
 El fichero `subtareas.ini` es la única definición del plan de trabajo del agente: cada sección en orden que tenga un `prompt` crea una subtarea con ese nombre. Puedes añadir, quitar, renombrar o reordenar fases libremente; usa `{user_prompt}` para incluir la petición original y `{NOMBRE_SECCION}` para insertar la salida de una subtarea anterior. No hay fases especiales ni plan predeterminado: si falta el fichero o no define subtareas válidas, el programa no ejecuta ninguna subtarea. El `subtareas.ini` distribuido incluye un plan inicial (`ANALIZAR`, `IMPLEMENTAR`, `COMPROBAR`) que puedes sustituir por completo.
 La barra de título se configura con `titlebar_style` (`system` | `dark` | `accent` | `custom`) en `[UI]`; también admite las variables de entorno `HERCULES_TITLEBAR_STYLE`, `HERCULES_TITLEBAR_COLOR` y `HERCULES_TITLEBAR_TEXT_COLOR`. En plataformas distintas de Windows no tiene efecto.
@@ -96,7 +98,7 @@ Suites individuales:
 | `test_ui_layout.py` | layout Qt y ejecución de JavaScript en Chromium |
 | `test_modern_titlebar.py` | opciones de barra de título en Configuración Qt |
 | `test_welcome_dialog.py` | diálogo Qt de bienvenida durante el arranque |
-| `test_computer_tools.py` | herramientas de captura de pantalla y control del ratón |
+| `test_computer_tools.py` | herramientas de captura de pantalla y control del ratón y teclado |
 
 ## 🏗️ Compilar ejecutable en Windows
 

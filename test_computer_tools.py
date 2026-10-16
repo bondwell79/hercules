@@ -40,6 +40,8 @@ class ToolTests(unittest.TestCase):
             "take_screenshot": hercules.RiskLevel.SAFE,
             "mouse_click": hercules.RiskLevel.SAFE,
             "mouse_move": hercules.RiskLevel.SAFE,
+            "keyboard_type_text": hercules.RiskLevel.SAFE,
+            "keyboard_press_keys": hercules.RiskLevel.SAFE,
             "write_file": hercules.RiskLevel.SAFE,
             "create_file": hercules.RiskLevel.SAFE,
             "edit_file": hercules.RiskLevel.SAFE,
@@ -167,6 +169,35 @@ class ToolTests(unittest.TestCase):
                 computer_tools.mouse_click(1, 2, clicks=0)
             with self.assertRaises(ValueError):
                 computer_tools.mouse_move(1, 2, duration=-1)
+        get_pyautogui.assert_not_called()
+
+    def test_keyboard_type_text_forwards_text_and_interval(self) -> None:
+        pyautogui = Mock()
+        with patch.object(computer_tools, "_get_pyautogui", return_value=pyautogui):
+            result = computer_tools.keyboard_type_text("hola", interval=0.1)
+
+        pyautogui.write.assert_called_once_with("hola", interval=0.1)
+        self.assertIn("4 caracteres", result)
+
+    def test_keyboard_press_keys_supports_single_key_and_combinations(self) -> None:
+        pyautogui = Mock()
+        with patch.object(computer_tools, "_get_pyautogui", return_value=pyautogui):
+            self.assertIn("enter", computer_tools.keyboard_press_keys(["enter"]))
+            self.assertIn("ctrl + s", computer_tools.keyboard_press_keys(["ctrl", "s"]))
+
+        pyautogui.press.assert_called_once_with("enter")
+        pyautogui.hotkey.assert_called_once_with("ctrl", "s")
+
+    def test_invalid_keyboard_arguments_are_rejected(self) -> None:
+        with patch.object(computer_tools, "_get_pyautogui") as get_pyautogui:
+            with self.assertRaises(ValueError):
+                computer_tools.keyboard_type_text(123)
+            with self.assertRaises(ValueError):
+                computer_tools.keyboard_type_text("text", interval=-1)
+            with self.assertRaises(ValueError):
+                computer_tools.keyboard_press_keys([])
+            with self.assertRaises(ValueError):
+                computer_tools.keyboard_press_keys(["ctrl", ""])
         get_pyautogui.assert_not_called()
 
     def test_write_file(self) -> None:
