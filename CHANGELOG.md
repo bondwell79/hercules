@@ -6,6 +6,9 @@ Todos los cambios notables se documentan aquí. Formato basado en [Keep a Change
 
 ## [Unreleased]
 
+### Changed
+- **Referencias interactivas del navegador.** `browser_snapshot` asigna referencias únicas (`@e1`, `@e2`, …) a los controles visibles; `browser_click(ref=...)` y `browser_fill(ref=..., text=...)` las usan sin depender de selectores CSS. Las referencias caducan tras navegar, desplazarse, interactuar o capturar otro snapshot. Los selectores CSS siguen disponibles para compatibilidad. Añadidas pruebas Qt para generación, uso y caducidad de referencias.
+
 ### Fixed (robustez para producción)
 - **Abortar ya interrumpe la petición al LLM.** `LLMConnector.chat()` acepta `cancel_event`: la espera del lock y la petición HTTP se cancelan en ~0,1 s (nueva excepción `LLMCancelled`) en lugar de bloquear hasta `timeout`. En modo local se detiene además la generación.
 - **La consulta de preautorización ya no deja el LLM bloqueado:** al expirar su plazo aborta su petición y libera el lock; la espera del lock respeta el timeout y la cancelación.

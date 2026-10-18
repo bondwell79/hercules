@@ -137,7 +137,20 @@ class BrowserToolBridge(QObject):
     def __init__(self, dashboard: "QtDashboard") -> None:
         super().__init__(dashboard)
         self.dashboard = dashboard
+        self._next_ref_id = 1
+        self._snapshot_generation = 0
+        self._active_refs: set[str] = set()
         self.request.connect(self._execute)
+
+    def _invalidate_refs(self) -> None:
+        """Invalida las referencias tras navegación o interacción con la página."""
+        self._snapshot_generation += 1
+        self._active_refs.clear()
+
+    def _invalidate_after_javascript(self, completed: threading.Event, response: Dict[str, str]) -> None:
+        """Invalida refs tras un scroll, que puede cargar contenido dinámico."""
+        self._invalidate_refs()
+        self._finish(completed, response, "Desplazamiento completado; solicita otro browser_snapshot para obtener referencias vigentes.")
 
     def run(self, action: str, arguments: Dict[str, Any]) -> str:
         completed = threading.Event()
@@ -157,10 +170,12 @@ class BrowserToolBridge(QObject):
             self.dashboard.workspace_tabs.setCurrentIndex(browser_index)
         try:
             if action == "navigate":
+                self._invalidate_refs()
                 address = str(arguments.get("url", ""))
                 self._navigate(address, completed, response)
                 return
             elif action in {"back", "forward", "reload"}:
+                self._invalidate_refs()
                 getattr(self.dashboard.web_view, action)()
                 response["result"] = f"Acción del navegador ejecutada: {action}"
             elif action == "screenshot":
@@ -169,19 +184,7 @@ class BrowserToolBridge(QObject):
                 self._scroll(arguments, completed, response)
                 return
             elif action == "snapshot":
-                self.dashboard.web_view.page().runJavaScript(
-                    """(() => {
-                      const visible = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
-                      const nodes = [...document.querySelectorAll('a,button,input,textarea,select,[role],h1,h2,h3')]
-                        .filter(visible).slice(0, 250);
-                      const lines = nodes.map(e => {
-                        const label = e.getAttribute('aria-label') || e.innerText || e.value || e.placeholder || '';
-                        return `${e.tagName.toLowerCase()}${e.id ? '#'+e.id : ''}${e.getAttribute('role') ? '[role='+e.getAttribute('role')+']' : ''} ${label.trim().replace(/\\s+/g,' ').slice(0,180)}`;
-                      }).filter(line => line.trim());
-                      return `URL: ${location.href}\\nTítulo: ${document.title}\\n${document.body.innerText.slice(0,12000)}\\nControles:\\n${lines.join('\\n')}`;
-                    })()""",
-                    lambda result: self._finish(completed, response, str(result or "(página vacía)")),
-                )
+                self._snapshot(completed, response)
                 return
             elif action in {"click", "fill", "press_key"}:
                 self._interact(action, arguments, completed, response)
@@ -225,6 +228,61 @@ class BrowserToolBridge(QObject):
         )
         self.dashboard.web_view.setUrl(url)
 
+    def _snapshot(
+        self,
+        completed: threading.Event,
+        response: Dict[str, str],
+    ) -> None:
+        """Devuelve el texto de la página y referencias efímeras a sus controles."""
+        self._invalidate_refs()
+        first_id = self._next_ref_id
+        script = f"""(() => {{
+          const visible = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
+          const selector = 'a,button,input,textarea,select,[role],[contenteditable="true"],[tabindex]:not([tabindex="-1"])';
+          document.querySelectorAll('[data-hercules-ref]').forEach(e => e.removeAttribute('data-hercules-ref'));
+          const nodes = [...document.querySelectorAll(selector)].filter(visible).slice(0, 250);
+          const controls = nodes.map((e, i) => {{
+            const ref = 'e' + ({first_id} + i);
+            e.setAttribute('data-hercules-ref', ref);
+            const label = (e.getAttribute('aria-label') || e.innerText || e.value || e.placeholder || e.title || '').trim().replace(/\\s+/g, ' ').slice(0, 180);
+            const details = [e.tagName.toLowerCase(), e.getAttribute('type'), e.getAttribute('role')].filter(Boolean).join(' ');
+            return {{ref, details, label}};
+          }});
+          return {{url: location.href, title: document.title,
+            text: (document.body ? document.body.innerText : '').slice(0, 12000), controls}};
+        }})()"""
+
+        def _received(result: Any) -> None:
+            if not isinstance(result, dict):
+                self._finish(completed, response, "ERROR: no se pudo leer la página")
+                return
+            controls = result.get("controls", [])
+            lines = []
+            refs: set[str] = set()
+            for control in controls:
+                if not isinstance(control, dict):
+                    continue
+                ref = str(control.get("ref", ""))
+                if not ref:
+                    continue
+                refs.add(ref)
+                lines.append(
+                    f"@{ref} {control.get('details', 'control')} "
+                    f"{control.get('label', '')}".rstrip()
+                )
+            self._active_refs = refs
+            self._next_ref_id = first_id + len(controls)
+            text = (
+                f"URL: {result.get('url', '')}\\n"
+                f"Título: {result.get('title', '')}\\n"
+                f"{result.get('text', '')}\\n"
+                f"Controles interactivos (usa ref en browser_click/browser_fill):\\n"
+                f"{chr(10).join(lines) if lines else '(sin controles interactivos visibles)'}"
+            )
+            self._finish(completed, response, text)
+
+        self.dashboard.web_view.page().runJavaScript(script, _received)
+
     def _interact(
         self,
         action: str,
@@ -233,6 +291,7 @@ class BrowserToolBridge(QObject):
         response: Dict[str, str],
     ) -> None:
         if action == "press_key":
+            self._invalidate_refs()
             raw_key = str(arguments.get("key", "")).strip()
             key, text, key_name = self._resolve_qt_key(raw_key)
             web_view = self.dashboard.web_view
@@ -250,26 +309,44 @@ class BrowserToolBridge(QObject):
             self._finish(completed, response, f"Tecla enviada: {key_name}")
             return
 
-        raw_selector = str(arguments.get("selector", ""))
-        selector = json.dumps(raw_selector)
-        selector_label = json.dumps(raw_selector)
-        if not arguments.get("selector"):
-            raise ValueError("selector es obligatorio")
+        raw_ref = str(arguments.get("ref", "")).strip().lstrip("@")
+        raw_selector = str(arguments.get("selector", "")).strip()
+        if raw_ref:
+            if raw_ref not in self._active_refs:
+                raise ValueError(
+                    f"referencia @{raw_ref} desconocida o caducada; "
+                    "obtén un browser_snapshot nuevo"
+                )
+            selector = f"[data-hercules-ref={json.dumps(raw_ref)}]"
+            target_label = f"@{raw_ref}"
+        elif raw_selector:
+            selector = raw_selector
+            target_label = raw_selector
+        else:
+            raise ValueError("indica ref (p. ej. e3) o selector CSS")
+        selector_json = json.dumps(selector)
+        label_json = json.dumps(target_label)
         value = json.dumps(str(arguments.get("text", "")))
         if action == "click":
             operation = "e.click();"
         else:
-            operation = f"""const setter=Object.getOwnPropertyDescriptor(
-              e instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,'value').set;
-              if (!setter) return 'ERROR: el elemento no admite texto'; setter.call(e,{value});
+            operation = f"""if (!(e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement || e.isContentEditable)) return 'ERROR: el elemento no admite texto';
+              if (e.isContentEditable) e.textContent={value};
+              else {{ const proto=e instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+                const setter=Object.getOwnPropertyDescriptor(proto,'value').set;
+                if (!setter) return 'ERROR: el elemento no admite texto'; setter.call(e,{value}); }}
               e.dispatchEvent(new Event('input',{{bubbles:true}})); e.dispatchEvent(new Event('change',{{bubbles:true}}));"""
-        script = f"""(() => {{ let e; try {{ e=document.querySelector({selector}); }} catch (error) {{ return 'ERROR: selector CSS inválido'; }}
+        script = f"""(() => {{ let e; try {{ e=document.querySelector({selector_json}); }} catch (error) {{ return 'ERROR: selector CSS inválido'; }}
           if (!e) return 'ERROR: no se encontró el elemento'; e.scrollIntoView({{block:'center'}}); {operation}
-          return 'OK: '+e.tagName.toLowerCase()+' ('+{selector_label}+ ')'; }})()"""
-        self.dashboard.web_view.page().runJavaScript(
-            script,
-            lambda result: self._finish(completed, response, str(result or "OK")),
-        )
+          return 'OK: '+e.tagName.toLowerCase()+' ('+{label_json}+')'; }})()"""
+
+        def _finished(result: Any) -> None:
+            result_text = str(result or "ERROR: operación sin resultado")
+            if result_text.startswith("OK:"):
+                self._invalidate_refs()
+            self._finish(completed, response, result_text)
+
+        self.dashboard.web_view.page().runJavaScript(script, _finished)
 
     def _scroll(
         self,
@@ -289,11 +366,22 @@ class BrowserToolBridge(QObject):
         direction_label = "abajo" if direction == "down" else "arriba"
         self.dashboard.web_view.page().runJavaScript(
             f"(() => {{ window.scrollBy(0, {delta}); return Math.round(window.scrollY); }})()",
-            lambda scroll_y: self._finish(
-                completed,
-                response,
-                f"Página desplazada hacia {direction_label} {amount} px; posición vertical: {scroll_y} px",
-            ),
+            lambda scroll_y: self._finish_scroll(completed, response, direction_label, amount, scroll_y),
+        )
+
+    def _finish_scroll(
+        self,
+        completed: threading.Event,
+        response: Dict[str, str],
+        direction_label: str,
+        amount: int,
+        scroll_y: Any,
+    ) -> None:
+        self._invalidate_refs()
+        self._finish(
+            completed,
+            response,
+            f"Página desplazada hacia {direction_label} {amount} px; posición vertical: {scroll_y} px",
         )
 
     @staticmethod
@@ -906,9 +994,9 @@ class QtDashboard(QMainWindow):
         self._browser_tool_bridge = BrowserToolBridge(self)
         definitions = [
             ("browser_navigate", "Navega en el navegador integrado a una URL HTTP(S) o documento local del workspace.", {"url": {"type": "string", "description": "URL HTTP(S) o file:// dentro del workspace."}}, ["url"], "navigate"),
-            ("browser_snapshot", "Devuelve título, texto y controles visibles de la página abierta en el navegador integrado.", {}, [], "snapshot"),
-            ("browser_click", "Hace clic en un elemento de la página seleccionándolo con un selector CSS.", {"selector": {"type": "string", "description": "Selector CSS del elemento."}}, ["selector"], "click"),
-            ("browser_fill", "Rellena un campo de formulario seleccionado con un selector CSS.", {"selector": {"type": "string", "description": "Selector CSS del campo."}, "text": {"type": "string", "description": "Texto que se escribirá."}}, ["selector", "text"], "fill"),
+            ("browser_snapshot", "Devuelve URL, título, texto y controles interactivos visibles. Asigna referencias como @e1; usa esas referencias con browser_click(ref=\"e1\") o browser_fill(ref=\"e2\", text=...). Las referencias caducan tras navegar, interactuar o tomar otro snapshot.", {}, [], "snapshot"),
+            ("browser_click", "Hace clic en un control usando la referencia devuelta por browser_snapshot; también admite selector CSS para compatibilidad.", {"ref": {"type": "string", "description": "Referencia del snapshot, por ejemplo e3 o @e3."}, "selector": {"type": "string", "description": "Selector CSS opcional para compatibilidad."}}, [], "click"),
+            ("browser_fill", "Rellena un campo usando la referencia devuelta por browser_snapshot; también admite selector CSS.", {"ref": {"type": "string", "description": "Referencia del snapshot, por ejemplo e2 o @e2."}, "selector": {"type": "string", "description": "Selector CSS opcional para compatibilidad."}, "text": {"type": "string", "description": "Texto que se escribirá."}}, ["text"], "fill"),
             (
                 "browser_scroll",
                 "Desplaza la página del navegador integrado hacia arriba o abajo.",

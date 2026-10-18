@@ -133,6 +133,67 @@ class QtDashboardLayoutTests(unittest.TestCase):
         for name in expected:
             self.assertEqual(registry.tools[name].risk, hercules.RiskLevel.SAFE)
 
+    def test_browser_snapshot_assigns_interactive_refs(self):
+        bridge = BrowserToolBridge(self.window)
+        completed = threading.Event()
+        response = {}
+        callbacks = []
+        with patch.object(
+            self.window.web_view.page(), "runJavaScript",
+            side_effect=lambda script, callback: callbacks.append((script, callback)),
+        ):
+            bridge._execute(("snapshot", {}, completed, response))
+        self.assertEqual(len(callbacks), 1)
+        script = callbacks[0][0]
+        self.assertIn("data-hercules-ref", script)
+        self.assertIn("const ref = 'e'", script)
+        callbacks[0][1]({
+            "url": "https://example.test", "title": "Example", "text": "Contenido",
+            "controls": [
+                {"ref": "e1", "details": "button", "label": "Enviar"},
+                {"ref": "e2", "details": "input text", "label": "Correo"},
+            ],
+        })
+        self.assertTrue(completed.is_set())
+        self.assertIn("@e1 button Enviar", response["result"])
+        self.assertIn("@e2 input text Correo", response["result"])
+        self.assertEqual(bridge._active_refs, {"e1", "e2"})
+
+    def test_browser_click_and_fill_accept_snapshot_refs(self):
+        bridge = BrowserToolBridge(self.window)
+        bridge._active_refs = {"e1", "e2"}
+        for action, arguments, expected in (
+            ("click", {"ref": "@e1"}, '[data-hercules-ref="e1"]'),
+            ("fill", {"ref": "e2", "text": "hola"}, '[data-hercules-ref="e2"]'),
+        ):
+            with self.subTest(action=action):
+                bridge._active_refs = {"e1", "e2"}
+                callbacks = []
+                completed = threading.Event()
+                response = {}
+                with patch.object(
+                    self.window.web_view.page(), "runJavaScript",
+                    side_effect=lambda script, callback: callbacks.append((script, callback)),
+                ):
+                    bridge._interact(action, arguments, completed, response)
+                self.assertIn("data-hercules-ref=", callbacks[0][0])
+                self.assertIn(action and arguments["ref"].lstrip("@"), callbacks[0][0])
+                callbacks[0][1]("OK: control (@e1)")
+                self.assertTrue(completed.is_set())
+                self.assertEqual(bridge._active_refs, set())
+
+    def test_browser_ref_must_be_current_and_css_selector_stays_supported(self):
+        bridge = BrowserToolBridge(self.window)
+        with self.assertRaisesRegex(ValueError, "caducada"):
+            bridge._interact("click", {"ref": "e9"}, threading.Event(), {})
+        callbacks = []
+        with patch.object(
+            self.window.web_view.page(), "runJavaScript",
+            side_effect=lambda script, callback: callbacks.append((script, callback)),
+        ):
+            bridge._interact("click", {"selector": "#submit"}, threading.Event(), {})
+        self.assertIn('document.querySelector("#submit")', callbacks[0][0])
+
     def test_browser_tool_execution_selects_browser_tab(self):
         bridge = BrowserToolBridge(self.window)
         browser_index = self.window.workspace_tabs.indexOf(

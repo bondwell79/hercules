@@ -3369,9 +3369,10 @@ HERRAMIENTAS DISPONIBLES:
 - delete_file(path): Elimina un archivo o directorio del workspace.
 - get_current_time(): Devuelve la fecha y hora UTC actuales.
 - browser_navigate(url): Navega en el navegador integrado (HTTP(S) o archivo local del workspace).
-- browser_snapshot(): Lee el texto, título y controles visibles de la página actual.
-- browser_click(selector): Hace clic en un elemento por selector CSS.
-- browser_fill(selector, text): Rellena un campo por selector CSS.
+- browser_snapshot(): Lee URL, título, texto y controles interactivos visibles; asigna referencias únicas como @e1 a cada control.
+- browser_click(ref, selector): Hace clic usando ref de browser_snapshot (preferido) o un selector CSS.
+- browser_fill(ref, text, selector): Rellena por referencia de browser_snapshot (preferido) o selector CSS.
+  Las referencias son temporales y caducan al navegar, desplazar, interactuar o pedir otro snapshot; solicita uno nuevo si una referencia no se encuentra.
 - browser_scroll(direction, amount): Desplaza la página hacia arriba o abajo; amount es una distancia opcional en píxeles (600 por defecto).
 - browser_press_key(key): Pulsación de tecla en la página web. Si la tecla no es reconocida por el navegador responderá con un aviso.
 - browser_screenshot(path): Captura el navegador y adjunta la imagen para analizarla.
