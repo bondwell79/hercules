@@ -2972,7 +2972,7 @@ class LoopDetector:
 # MOTOR DEL AGENTE (ReAct)
 # ============================================================================
 
-SYSTEM_PROMPT = """Eres un agente autónomo con acceso a HERRAMIENTAS (tools/functions). Tienes permiso y DEBES usarlas cuando la tarea lo requiera.
+SYSTEM_PROMPT = """Eres un agente autónomo con acceso a HERRAMIENTAS (tools/functions).
 
 HERRAMIENTAS DISPONIBLES:
 - read_file(path): Lee el contenido de texto de un archivo del workspace.
@@ -2987,15 +2987,19 @@ HERRAMIENTAS DISPONIBLES:
 - execute_command(command): Ejecuta un comando del sistema dentro del workspace.
 - delete_file(path): Elimina un archivo o directorio del workspace.
 - get_current_time(): Devuelve la fecha y hora UTC actuales.
+- browser_navigate(url): Navega en el navegador integrado (HTTP(S) o archivo local del workspace).
+- browser_snapshot(): Lee el texto, título y controles visibles de la página actual.
+- browser_click(selector): Hace clic en un elemento por selector CSS.
+- browser_fill(selector, text): Rellena un campo por selector CSS.
+- browser_press_key(key): Envía una tecla al elemento enfocado.
+- browser_screenshot(path): Captura el navegador y adjunta la imagen para analizarla.
+- browser_back(), browser_forward(), browser_reload(): Controlan el historial y recarga.
 
-REGLAS OBLIGATORIAS:
-1. SIEMPRE que el usuario pida crear, escribir, modificar, leer o buscar archivos, DEBES llamar a la herramienta correspondiente. NO respondas con texto diciendo que no puedes hacerlo.
-2. NO inventes código en tu respuesta. USA write_file para guardar código en archivos.
-3. NO digas "no tengo acceso" o "no puedo crear archivos". TIENES ACCESO a través de las herramientas.
-4. Cuando llames a una herramienta, el sistema te devolverá el resultado automáticamente.
-5. Después de obtener los resultados de las herramientas, proporciona una respuesta final concisa SIN tool_calls.
-6. Si una herramienta falla, intenta otra estrategia o explica el problema brevemente.
-7. Sé claro y breve en tus razonamientos.
+PRIORIDADES:
+1. Si la tarea a realizar requiere acceder a internet, primero usa comandos browser antes de ejecutar comandos.
+2. Si la tarea requiere utilizar un programa del sistema que tiene entorno gráfico intenta usar primero los comandos take_screenshot, mouse_click, mouse_move, keyboard_type_text y keyboard_press_keys antes de ejecutar comandos del sistema.
+3. Si la tarea requiere manipular archivos, primero intenta usar los comandos read_file, read_binary_file, read_binary_hex, create_file, edit_file, search_in_files, write_file, list_directory y search_files antes de ejecutar comandos del sistema.
+4. Si no consigues realizar la tarea usando las herramientas indicadas en los puntos 1, 2 y 3, entonces puedes usar execute_command para ejecutar un comando del sistema.
 
 FORMATO DE RESPUESTA:
 - Si necesitas actuar: emite una o más tool_calls.
@@ -3288,7 +3292,7 @@ class Agent:
         )
         image_data = (
             _screenshot_data_uri(output)
-            if success and tool.name == "take_screenshot"
+            if success and tool.name in {"take_screenshot", "browser_screenshot"}
             else None
         )
         return ToolResult(call.id, call.name, success, output, image_data)

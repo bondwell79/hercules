@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import configparser
+import json
 import queue
 import threading
 import traceback
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
-from PySide6.QtCore import QTimer, QUrl, Qt
+from PySide6.QtCore import QObject, QTimer, QUrl, Qt, Signal, Slot
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -123,6 +124,156 @@ class WorkspaceWebPage(QWebEnginePage):
             return True
         path = _file_url_path(url)
         return path is not None and _is_within_workspace(path, self.workspace)
+
+
+class BrowserToolBridge(QObject):
+    """Runs browser tool requests on the Qt GUI thread and returns their results."""
+
+    request = Signal(object)
+
+    def __init__(self, dashboard: "QtDashboard") -> None:
+        super().__init__(dashboard)
+        self.dashboard = dashboard
+        self.request.connect(self._execute)
+
+    def run(self, action: str, arguments: Dict[str, Any]) -> str:
+        completed = threading.Event()
+        response: Dict[str, str] = {}
+        self.request.emit((action, arguments, completed, response))
+        if not completed.wait(30):
+            return "ERROR: el navegador no respondió dentro de 30 segundos"
+        return response.get("result", "ERROR: el navegador no devolvió resultado")
+
+    @Slot(object)
+    def _execute(self, request: Any) -> None:
+        action, arguments, completed, response = request
+        browser_index = self.dashboard.workspace_tabs.indexOf(
+            self.dashboard.web_view.parentWidget()
+        )
+        if browser_index >= 0:
+            self.dashboard.workspace_tabs.setCurrentIndex(browser_index)
+        try:
+            if action == "navigate":
+                address = str(arguments.get("url", ""))
+                self._navigate(address, completed, response)
+                return
+            elif action in {"back", "forward", "reload"}:
+                getattr(self.dashboard.web_view, action)()
+                response["result"] = f"Acción del navegador ejecutada: {action}"
+            elif action == "screenshot":
+                response["result"] = self._screenshot(arguments.get("path"))
+            elif action == "snapshot":
+                self.dashboard.web_view.page().runJavaScript(
+                    """(() => {
+                      const visible = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
+                      const nodes = [...document.querySelectorAll('a,button,input,textarea,select,[role],h1,h2,h3')]
+                        .filter(visible).slice(0, 250);
+                      const lines = nodes.map(e => {
+                        const label = e.getAttribute('aria-label') || e.innerText || e.value || e.placeholder || '';
+                        return `${e.tagName.toLowerCase()}${e.id ? '#'+e.id : ''}${e.getAttribute('role') ? '[role='+e.getAttribute('role')+']' : ''} ${label.trim().replace(/\\s+/g,' ').slice(0,180)}`;
+                      }).filter(line => line.trim());
+                      return `URL: ${location.href}\\nTítulo: ${document.title}\\n${document.body.innerText.slice(0,12000)}\\nControles:\\n${lines.join('\\n')}`;
+                    })()""",
+                    lambda result: self._finish(completed, response, str(result or "(página vacía)")),
+                )
+                return
+            elif action in {"click", "fill", "press_key"}:
+                self._interact(action, arguments, completed, response)
+                return
+            else:
+                raise ValueError(f"Acción de navegador desconocida: {action}")
+        except Exception as exc:
+            response["result"] = f"ERROR: {exc}"
+        completed.set()
+
+    def _navigate(
+        self,
+        address: str,
+        completed: threading.Event,
+        response: Dict[str, str],
+    ) -> None:
+        address = address.strip()
+        parsed = urlparse(address)
+        if parsed.scheme.lower() in {"http", "https"}:
+            url = QUrl(address)
+        elif parsed.scheme.lower() == "file":
+            path = Path(QUrl(address).toLocalFile()).resolve()
+            if not _is_within_workspace(path, self.dashboard.workspace):
+                raise ValueError("solo se permiten archivos locales del workspace")
+            url = QUrl.fromLocalFile(str(path))
+        else:
+            raise ValueError("url debe usar HTTP(S) o ser un file:// del workspace")
+        if not url.isValid() or not url.host() and url.scheme() in {"http", "https"}:
+            raise ValueError("URL no válida")
+        self.dashboard.address_bar.setText(url.toString())
+        self.dashboard.workspace_tabs.setCurrentIndex(
+            self.dashboard.workspace_tabs.indexOf(self.dashboard.web_view.parentWidget())
+        )
+        self.dashboard.web_view.loadFinished.connect(
+            lambda _success: self._finish(
+                completed,
+                response,
+                f"Página cargada: {self.dashboard.web_view.url().toString()}",
+            ),
+            Qt.ConnectionType.SingleShotConnection,
+        )
+        self.dashboard.web_view.setUrl(url)
+
+    def _interact(
+        self,
+        action: str,
+        arguments: Dict[str, Any],
+        completed: threading.Event,
+        response: Dict[str, str],
+    ) -> None:
+        raw_selector = str(arguments.get("selector", ""))
+        selector = json.dumps(raw_selector)
+        selector_label = json.dumps(raw_selector)
+        if action == "press_key":
+            key = json.dumps(str(arguments.get("key", "")))
+            script = f"""(() => {{ const e=document.activeElement || document.body;
+              e.dispatchEvent(new KeyboardEvent('keydown',{{key:{key},bubbles:true}}));
+              e.dispatchEvent(new KeyboardEvent('keyup',{{key:{key},bubbles:true}}));
+              return 'Tecla enviada: '+{key}; }})()"""
+        else:
+            if not arguments.get("selector"):
+                raise ValueError("selector es obligatorio")
+            value = json.dumps(str(arguments.get("text", "")))
+            if action == "click":
+                operation = "e.click();"
+            else:
+                operation = f"""const setter=Object.getOwnPropertyDescriptor(
+                  e instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,'value').set;
+                  if (!setter) return 'ERROR: el elemento no admite texto'; setter.call(e,{value});
+                  e.dispatchEvent(new Event('input',{{bubbles:true}})); e.dispatchEvent(new Event('change',{{bubbles:true}}));"""
+            script = f"""(() => {{ let e; try {{ e=document.querySelector({selector}); }} catch (error) {{ return 'ERROR: selector CSS inválido'; }}
+              if (!e) return 'ERROR: no se encontró el elemento'; e.scrollIntoView({{block:'center'}}); {operation}
+              return 'OK: '+e.tagName.toLowerCase()+' ('+{selector_label}+ ')'; }})()"""
+        self.dashboard.web_view.page().runJavaScript(
+            script,
+            lambda result: self._finish(completed, response, str(result or "OK")),
+        )
+
+    def _screenshot(self, raw_path: Any) -> str:
+        if raw_path:
+            path = Path(str(raw_path)).expanduser()
+            if not path.is_absolute():
+                path = self.dashboard.workspace / path
+            path = path.resolve()
+        else:
+            path = self.dashboard.workspace / "browser_screenshot.png"
+        if not _is_within_workspace(path, self.dashboard.workspace):
+            raise ValueError("la captura debe guardarse dentro del workspace")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        image = self.dashboard.web_view.grab()
+        if not image.save(str(path), "PNG"):
+            raise OSError(f"no se pudo guardar la captura: {path}")
+        return f"Captura de pantalla guardada en: {path} ({image.width()}x{image.height()})"
+
+    @staticmethod
+    def _finish(completed: threading.Event, response: Dict[str, str], result: str) -> None:
+        response["result"] = result[:20000]
+        completed.set()
 
 
 class SettingsDialog(QDialog):
@@ -619,6 +770,8 @@ class QtDashboard(QMainWindow):
         self.workspace = Path(core_module.WORKSPACE_DIR).resolve()
         self.db = core_module.Database()
         self.tools = core_module.ToolsRegistry()
+        self._browser_tool_bridge: Optional[BrowserToolBridge] = None
+        self._register_browser_tools()
         self.llm = core_module.LLMConnector()
         self.ui_queue: queue.Queue[Dict[str, Any]] = queue.Queue()
         self._monitor_command_tool()
@@ -659,6 +812,31 @@ class QtDashboard(QMainWindow):
         self._task_timer = QTimer(self)
         self._task_timer.timeout.connect(self._refresh_task_lists)
         self._task_timer.start(self.TASK_REFRESH_INTERVAL_MS)
+
+    def _register_browser_tools(self) -> None:
+        register = getattr(self.tools, "register", None)
+        if not callable(register):
+            return
+        self._browser_tool_bridge = BrowserToolBridge(self)
+        definitions = [
+            ("browser_navigate", "Navega en el navegador integrado a una URL HTTP(S) o documento local del workspace.", {"url": {"type": "string", "description": "URL HTTP(S) o file:// dentro del workspace."}}, ["url"], "navigate"),
+            ("browser_snapshot", "Devuelve título, texto y controles visibles de la página abierta en el navegador integrado.", {}, [], "snapshot"),
+            ("browser_click", "Hace clic en un elemento de la página seleccionándolo con un selector CSS.", {"selector": {"type": "string", "description": "Selector CSS del elemento."}}, ["selector"], "click"),
+            ("browser_fill", "Rellena un campo de formulario seleccionado con un selector CSS.", {"selector": {"type": "string", "description": "Selector CSS del campo."}, "text": {"type": "string", "description": "Texto que se escribirá."}}, ["selector", "text"], "fill"),
+            ("browser_press_key", "Envía una tecla al elemento enfocado en el navegador integrado.", {"key": {"type": "string", "description": "Nombre de la tecla, por ejemplo Enter o Escape."}}, ["key"], "press_key"),
+            ("browser_screenshot", "Captura el navegador integrado y adjunta la imagen para que el modelo pueda analizarla.", {"path": {"type": "string", "description": "Ruta de salida opcional, relativa al workspace."}}, [], "screenshot"),
+            ("browser_back", "Retrocede en el historial del navegador integrado.", {}, [], "back"),
+            ("browser_forward", "Avanza en el historial del navegador integrado.", {}, [], "forward"),
+            ("browser_reload", "Recarga la página del navegador integrado.", {}, [], "reload"),
+        ]
+        for name, description, properties, required, action in definitions:
+            register(self.core.ToolDefinition(
+                name=name,
+                description=description,
+                risk=self.core.RiskLevel.SAFE,
+                parameters={"type": "object", "properties": properties, "required": required},
+                runner=lambda arguments, browser_action=action: self._browser_tool_bridge.run(browser_action, arguments),
+            ))
 
     def _clear_unfinished_tasks(self) -> None:
         try:
@@ -1418,6 +1596,9 @@ class QtDashboard(QMainWindow):
     def _load_local_document(self, path: Path) -> None:
         if not path.is_file():
             return
+        browser_index = self.workspace_tabs.indexOf(self.web_view.parentWidget())
+        if browser_index >= 0:
+            self.workspace_tabs.setCurrentIndex(browser_index)
         self.web_view.setUrl(QUrl.fromLocalFile(str(path)))
 
     def _navigate_to_address(self) -> None:

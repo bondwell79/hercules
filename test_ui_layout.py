@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+import threading
 import types
 import unittest
 from unittest.mock import patch
@@ -12,7 +13,7 @@ os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
 os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu --no-sandbox")
 
 import hercules
-from hercules_qt import QtDashboard, SettingsDialog, _is_within_workspace
+from hercules_qt import BrowserToolBridge, QtDashboard, SettingsDialog, _is_within_workspace
 from PySide6.QtCore import QEventLoop, QTimer, QUrl, Qt
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PySide6.QtWidgets import (
@@ -49,6 +50,8 @@ class QtDashboardLayoutTests(unittest.TestCase):
         self.core = types.SimpleNamespace(
             CONFIG=hercules.CONFIG,
             CONFIG_PATH=hercules.CONFIG_PATH,
+            ToolDefinition=hercules.ToolDefinition,
+            RiskLevel=hercules.RiskLevel,
             WORKSPACE_DIR=workspace,
             SCRIPT_DIR=hercules.SCRIPT_DIR,
             VERSION=hercules.VERSION,
@@ -102,6 +105,83 @@ class QtDashboardLayoutTests(unittest.TestCase):
             )
         )
 
+    def test_browser_tools_are_registered_without_replacing_existing_tools(self):
+        self.assertIsNone(self.window._browser_tool_bridge)
+
+        class Registry:
+            def __init__(self):
+                self.tools = {}
+
+            def register(self, tool):
+                self.tools[tool.name] = tool
+
+        registry = Registry()
+        existing_tool = object()
+        registry.tools["read_file"] = existing_tool
+        self.window.tools = registry
+        self.window._register_browser_tools()
+
+        expected = {
+            "browser_navigate", "browser_snapshot", "browser_click", "browser_fill",
+            "browser_press_key", "browser_screenshot", "browser_back",
+            "browser_forward", "browser_reload",
+        }
+        self.assertEqual(set(registry.tools) - {"read_file"}, expected)
+        self.assertIs(registry.tools["read_file"], existing_tool)
+        self.assertIsNotNone(self.window._browser_tool_bridge)
+        for name in expected:
+            self.assertEqual(registry.tools[name].risk, hercules.RiskLevel.SAFE)
+
+    def test_browser_tool_execution_selects_browser_tab(self):
+        bridge = BrowserToolBridge(self.window)
+        browser_index = self.window.workspace_tabs.indexOf(
+            self.window.web_view.parentWidget()
+        )
+        self.window.workspace_tabs.setCurrentIndex(0)
+        completed = threading.Event()
+        response = {}
+
+        bridge._execute(("back", {}, completed, response))
+
+        self.assertEqual(self.window.workspace_tabs.currentIndex(), browser_index)
+        self.assertTrue(completed.is_set())
+        self.assertIn("back", response["result"])
+
+    def test_browser_tool_bridge_validates_navigation_and_screenshot_paths(self):
+        bridge = BrowserToolBridge(self.window)
+        completed = threading.Event()
+        response = {}
+
+        with self.assertRaisesRegex(ValueError, r"HTTP\(S\)"):
+            bridge._navigate("javascript:alert(1)", completed, response)
+        with self.assertRaisesRegex(ValueError, "workspace"):
+            bridge._screenshot("..\\outside.png")
+
+        local_page = self.window.workspace / "page.html"
+        local_page.write_text("<title>local</title>", encoding="utf-8")
+        bridge._navigate(
+            local_page.as_uri(),
+            threading.Event(),
+            {},
+        )
+        self.assertEqual(self.window.web_view.url(), QUrl.fromLocalFile(str(local_page)))
+        self.assertEqual(self.window.address_bar.text(), local_page.as_uri())
+
+    def test_browser_screenshot_is_saved_inside_workspace(self):
+        bridge = BrowserToolBridge(self.window)
+        with patch.object(self.window.web_view, "grab") as grab:
+            image = types.SimpleNamespace(
+                width=lambda: 800,
+                height=lambda: 600,
+                save=lambda path, _format: Path(path).write_bytes(b"png") > 0,
+            )
+            grab.return_value = image
+            result = bridge._screenshot("captures\\page.png")
+        screenshot = self.window.workspace / "captures" / "page.png"
+        self.assertTrue(screenshot.is_file())
+        self.assertIn(str(screenshot), result)
+        self.assertIn("(800x600)", result)
+
     def test_command_tool_output_is_shown_without_rerunning_command(self):
         calls = []
         tool = types.SimpleNamespace(
@@ -127,6 +207,22 @@ class QtDashboardLayoutTests(unittest.TestCase):
         self.assertEqual(
             self.window.terminal_view.toPlainText(),
             f"{terminal_path}> echo prueba\nsalida del comando\n",
+        )
+
+    def test_double_clicking_explorer_file_shows_browser_tab(self):
+        target = self.window.workspace / "opened.txt"
+        target.write_text("contenido", encoding="utf-8")
+        self.window.workspace_tabs.setCurrentIndex(0)
+        index = self.window.file_model.index(str(target))
+
+        self.window._open_file_from_tree(index)
+
+        browser_index = self.window.workspace_tabs.indexOf(
+            self.window.web_view.parentWidget()
+        )
+        self.assertEqual(self.window.workspace_tabs.currentIndex(), browser_index)
+        self.assertEqual(
+            self.window.web_view.url(), QUrl.fromLocalFile(str(target.resolve()))
         )
 
     def test_written_file_is_shown_in_browser_tab(self):

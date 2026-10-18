@@ -4,19 +4,26 @@
 from __future__ import annotations
 
 import base64
+import os
 import random
 import sys
 import tempfile
 import time
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
+os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu --no-sandbox")
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import computer_tools  # noqa: E402
 import hercules  # noqa: E402
+import hercules_qt  # noqa: E402
 
 
 class ToolTests(unittest.TestCase):
@@ -48,8 +55,21 @@ class ToolTests(unittest.TestCase):
             "search_in_files": hercules.RiskLevel.SAFE,
             "execute_command": hercules.RiskLevel.CRITICAL,
             "delete_file": hercules.RiskLevel.SAFE,
+            "browser_navigate": hercules.RiskLevel.SAFE,
+            "browser_snapshot": hercules.RiskLevel.SAFE,
+            "browser_click": hercules.RiskLevel.SAFE,
+            "browser_fill": hercules.RiskLevel.SAFE,
+            "browser_press_key": hercules.RiskLevel.SAFE,
+            "browser_screenshot": hercules.RiskLevel.SAFE,
+            "browser_back": hercules.RiskLevel.SAFE,
+            "browser_forward": hercules.RiskLevel.SAFE,
+            "browser_reload": hercules.RiskLevel.SAFE,
         }
-        tools = {tool.name: tool for tool in hercules.ToolsRegistry().all()}
+        registry = hercules.ToolsRegistry()
+        dashboard = types.SimpleNamespace(core=hercules, tools=registry)
+        with patch.object(hercules_qt, "BrowserToolBridge", return_value=Mock()):
+            hercules_qt.QtDashboard._register_browser_tools(dashboard)
+        tools = {tool.name: tool for tool in registry.all()}
 
         self.assertEqual(set(tools), set(expected_risks))
         for name, expected_risk in expected_risks.items():
@@ -106,6 +126,34 @@ class ToolTests(unittest.TestCase):
             "data:image/[contenido omitido del log]",
         )
         self.assertIsNone(hercules._screenshot_data_uri("screenshot"))
+
+    def test_browser_screenshot_is_attached_as_image_payload(self) -> None:
+        screenshot = self.workspace / "browser.png"
+        image_bytes = bytes.fromhex("89504e470d0a1a0a") + b"browser-image"
+        screenshot.write_bytes(image_bytes)
+        registry = hercules.ToolsRegistry()
+        registry.register(
+            hercules.ToolDefinition(
+                name="browser_screenshot",
+                description="Captura el navegador.",
+                risk=hercules.RiskLevel.SAFE,
+                parameters={"type": "object", "properties": {}},
+                runner=lambda _arguments: (
+                    f"Captura de pantalla guardada en: {screenshot} (10x20)"
+                ),
+            )
+        )
+        agent = hercules.Agent(Mock(), Mock(), registry, Mock(), Mock())
+
+        with patch.object(agent, "_log"):
+            result = agent._execute_tool_call(
+                1, hercules.ToolCall("call-1", "browser_screenshot", {})
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            base64.b64decode(result.image_data.split(",", 1)[1]), image_bytes
+        )
 
     def test_oversized_screenshot_is_compressed_under_four_megabytes(self) -> None:
         from PIL import Image
