@@ -2991,7 +2991,8 @@ HERRAMIENTAS DISPONIBLES:
 - browser_snapshot(): Lee el texto, título y controles visibles de la página actual.
 - browser_click(selector): Hace clic en un elemento por selector CSS.
 - browser_fill(selector, text): Rellena un campo por selector CSS.
-- browser_press_key(key): Envía una tecla al elemento enfocado.
+- browser_scroll(direction, amount): Desplaza la página hacia arriba o abajo; amount es una distancia opcional en píxeles (600 por defecto).
+- browser_press_key(key): Pulsación de tecla en la página web. Si la tecla no es reconocida por el navegador responderá con un aviso.
 - browser_screenshot(path): Captura el navegador y adjunta la imagen para analizarla.
 - browser_back(), browser_forward(), browser_reload(): Controlan el historial y recarga.
 

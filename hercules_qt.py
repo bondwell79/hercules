@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
-from PySide6.QtCore import QObject, QTimer, QUrl, Qt, Signal, Slot
+from PySide6.QtCore import QEvent, QObject, QTimer, QUrl, Qt, Signal, Slot
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -20,6 +20,7 @@ from PySide6.QtGui import (
     QDesktopServices,
     QFont,
     QFontDatabase,
+    QKeyEvent,
     QKeySequence,
     QPainter,
     QPainterPath,
@@ -162,6 +163,9 @@ class BrowserToolBridge(QObject):
                 response["result"] = f"Acción del navegador ejecutada: {action}"
             elif action == "screenshot":
                 response["result"] = self._screenshot(arguments.get("path"))
+            elif action == "scroll":
+                self._scroll(arguments, completed, response)
+                return
             elif action == "snapshot":
                 self.dashboard.web_view.page().runJavaScript(
                     """(() => {
@@ -226,33 +230,111 @@ class BrowserToolBridge(QObject):
         completed: threading.Event,
         response: Dict[str, str],
     ) -> None:
+        if action == "press_key":
+            raw_key = str(arguments.get("key", "")).strip()
+            key, text, key_name = self._resolve_qt_key(raw_key)
+            web_view = self.dashboard.web_view
+            web_view.setFocus(Qt.FocusReason.OtherFocusReason)
+            for event_type in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
+                QApplication.sendEvent(
+                    web_view,
+                    QKeyEvent(
+                        event_type,
+                        key,
+                        Qt.KeyboardModifier.NoModifier,
+                        text,
+                    ),
+                )
+            self._finish(completed, response, f"Tecla enviada: {key_name}")
+            return
+
         raw_selector = str(arguments.get("selector", ""))
         selector = json.dumps(raw_selector)
         selector_label = json.dumps(raw_selector)
-        if action == "press_key":
-            key = json.dumps(str(arguments.get("key", "")))
-            script = f"""(() => {{ const e=document.activeElement || document.body;
-              e.dispatchEvent(new KeyboardEvent('keydown',{{key:{key},bubbles:true}}));
-              e.dispatchEvent(new KeyboardEvent('keyup',{{key:{key},bubbles:true}}));
-              return 'Tecla enviada: '+{key}; }})()"""
+        if not arguments.get("selector"):
+            raise ValueError("selector es obligatorio")
+        value = json.dumps(str(arguments.get("text", "")))
+        if action == "click":
+            operation = "e.click();"
         else:
-            if not arguments.get("selector"):
-                raise ValueError("selector es obligatorio")
-            value = json.dumps(str(arguments.get("text", "")))
-            if action == "click":
-                operation = "e.click();"
-            else:
-                operation = f"""const setter=Object.getOwnPropertyDescriptor(
-                  e instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,'value').set;
-                  if (!setter) return 'ERROR: el elemento no admite texto'; setter.call(e,{value});
-                  e.dispatchEvent(new Event('input',{{bubbles:true}})); e.dispatchEvent(new Event('change',{{bubbles:true}}));"""
-            script = f"""(() => {{ let e; try {{ e=document.querySelector({selector}); }} catch (error) {{ return 'ERROR: selector CSS inválido'; }}
-              if (!e) return 'ERROR: no se encontró el elemento'; e.scrollIntoView({{block:'center'}}); {operation}
-              return 'OK: '+e.tagName.toLowerCase()+' ('+{selector_label}+ ')'; }})()"""
+            operation = f"""const setter=Object.getOwnPropertyDescriptor(
+              e instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,'value').set;
+              if (!setter) return 'ERROR: el elemento no admite texto'; setter.call(e,{value});
+              e.dispatchEvent(new Event('input',{{bubbles:true}})); e.dispatchEvent(new Event('change',{{bubbles:true}}));"""
+        script = f"""(() => {{ let e; try {{ e=document.querySelector({selector}); }} catch (error) {{ return 'ERROR: selector CSS inválido'; }}
+          if (!e) return 'ERROR: no se encontró el elemento'; e.scrollIntoView({{block:'center'}}); {operation}
+          return 'OK: '+e.tagName.toLowerCase()+' ('+{selector_label}+ ')'; }})()"""
         self.dashboard.web_view.page().runJavaScript(
             script,
             lambda result: self._finish(completed, response, str(result or "OK")),
         )
+
+    def _scroll(
+        self,
+        arguments: Dict[str, Any],
+        completed: threading.Event,
+        response: Dict[str, str],
+    ) -> None:
+        direction = str(arguments.get("direction", "")).strip().casefold()
+        if direction not in {"up", "down"}:
+            raise ValueError("direction debe ser 'up' o 'down'")
+
+        amount = arguments.get("amount", 600)
+        if isinstance(amount, bool) or not isinstance(amount, int) or amount <= 0:
+            raise ValueError("amount debe ser un entero positivo en píxeles")
+
+        delta = amount if direction == "down" else -amount
+        direction_label = "abajo" if direction == "down" else "arriba"
+        self.dashboard.web_view.page().runJavaScript(
+            f"(() => {{ window.scrollBy(0, {delta}); return Math.round(window.scrollY); }})()",
+            lambda scroll_y: self._finish(
+                completed,
+                response,
+                f"Página desplazada hacia {direction_label} {amount} px; posición vertical: {scroll_y} px",
+            ),
+        )
+
+    @staticmethod
+    def _resolve_qt_key(raw_key: str) -> tuple[Qt.Key, str, str]:
+        key_name = raw_key.strip()
+        if key_name.startswith("[") and key_name.endswith("]"):
+            key_name = key_name[1:-1].strip()
+        if not key_name:
+            raise ValueError("key debe ser un nombre de tecla no vacío")
+
+        normalized = key_name.casefold()
+        named_keys = {
+            "enter": (Qt.Key.Key_Return, "\r"),
+            "return": (Qt.Key.Key_Return, "\r"),
+            "escape": (Qt.Key.Key_Escape, ""),
+            "esc": (Qt.Key.Key_Escape, ""),
+            "tab": (Qt.Key.Key_Tab, "\t"),
+            "backspace": (Qt.Key.Key_Backspace, ""),
+            "delete": (Qt.Key.Key_Delete, ""),
+            "insert": (Qt.Key.Key_Insert, ""),
+            "home": (Qt.Key.Key_Home, ""),
+            "end": (Qt.Key.Key_End, ""),
+            "pageup": (Qt.Key.Key_PageUp, ""),
+            "pagedown": (Qt.Key.Key_PageDown, ""),
+            "arrowup": (Qt.Key.Key_Up, ""),
+            "up": (Qt.Key.Key_Up, ""),
+            "arrowdown": (Qt.Key.Key_Down, ""),
+            "down": (Qt.Key.Key_Down, ""),
+            "arrowleft": (Qt.Key.Key_Left, ""),
+            "left": (Qt.Key.Key_Left, ""),
+            "arrowright": (Qt.Key.Key_Right, ""),
+            "right": (Qt.Key.Key_Right, ""),
+            "space": (Qt.Key.Key_Space, " "),
+        }
+        if normalized in named_keys:
+            key, text = named_keys[normalized]
+        elif len(key_name) == 1 and key_name.isascii() and key_name.isprintable():
+            text = key_name
+            key = Qt.Key(ord(key_name.upper()))
+        else:
+            raise ValueError(f"tecla no reconocida: {raw_key}")
+
+        return key, text, key_name
 
     def _screenshot(self, raw_path: Any) -> str:
         if raw_path:
@@ -823,7 +905,38 @@ class QtDashboard(QMainWindow):
             ("browser_snapshot", "Devuelve título, texto y controles visibles de la página abierta en el navegador integrado.", {}, [], "snapshot"),
             ("browser_click", "Hace clic en un elemento de la página seleccionándolo con un selector CSS.", {"selector": {"type": "string", "description": "Selector CSS del elemento."}}, ["selector"], "click"),
             ("browser_fill", "Rellena un campo de formulario seleccionado con un selector CSS.", {"selector": {"type": "string", "description": "Selector CSS del campo."}, "text": {"type": "string", "description": "Texto que se escribirá."}}, ["selector", "text"], "fill"),
-            ("browser_press_key", "Envía una tecla al elemento enfocado en el navegador integrado.", {"key": {"type": "string", "description": "Nombre de la tecla, por ejemplo Enter o Escape."}}, ["key"], "press_key"),
+            (
+                "browser_scroll",
+                "Desplaza la página del navegador integrado hacia arriba o abajo.",
+                {
+                    "direction": {
+                        "type": "string",
+                        "enum": ["up", "down"],
+                        "description": "Dirección del desplazamiento.",
+                    },
+                    "amount": {
+                        "type": "integer",
+                        "description": "Distancia en píxeles; por defecto 600.",
+                    },
+                },
+                ["direction"],
+                "scroll",
+            ),
+            (
+                "browser_press_key",
+                "Envía una tecla nativa al navegador integrado. Las teclas especiales "
+                "pueden indicarse entre corchetes, por ejemplo [Enter] o [ArrowDown].",
+                {
+                    "key": {
+                        "type": "string",
+                        "description": (
+                            "Nombre de la tecla, por ejemplo Enter, Escape o [ArrowDown]."
+                        ),
+                    }
+                },
+                ["key"],
+                "press_key",
+            ),
             ("browser_screenshot", "Captura el navegador integrado y adjunta la imagen para que el modelo pueda analizarla.", {"path": {"type": "string", "description": "Ruta de salida opcional, relativa al workspace."}}, [], "screenshot"),
             ("browser_back", "Retrocede en el historial del navegador integrado.", {}, [], "back"),
             ("browser_forward", "Avanza en el historial del navegador integrado.", {}, [], "forward"),

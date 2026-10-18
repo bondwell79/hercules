@@ -14,7 +14,8 @@ os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu --no-sandbox"
 
 import hercules
 from hercules_qt import BrowserToolBridge, QtDashboard, SettingsDialog, _is_within_workspace
-from PySide6.QtCore import QEventLoop, QTimer, QUrl, Qt
+from PySide6.QtCore import QEvent, QEventLoop, QTimer, QUrl, Qt
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PySide6.QtWidgets import (
     QApplication,
@@ -123,7 +124,7 @@ class QtDashboardLayoutTests(unittest.TestCase):
 
         expected = {
             "browser_navigate", "browser_snapshot", "browser_click", "browser_fill",
-            "browser_press_key", "browser_screenshot", "browser_back",
+            "browser_scroll", "browser_press_key", "browser_screenshot", "browser_back",
             "browser_forward", "browser_reload",
         }
         self.assertEqual(set(registry.tools) - {"read_file"}, expected)
@@ -146,6 +147,77 @@ class QtDashboardLayoutTests(unittest.TestCase):
         self.assertEqual(self.window.workspace_tabs.currentIndex(), browser_index)
         self.assertTrue(completed.is_set())
         self.assertIn("back", response["result"])
+
+    def test_browser_scroll_moves_page_by_requested_amount(self):
+        bridge = BrowserToolBridge(self.window)
+        completed = threading.Event()
+        response = {}
+        callbacks = []
+
+        with patch.object(
+            self.window.web_view.page(), "runJavaScript",
+            side_effect=lambda script, callback: callbacks.append((script, callback)),
+        ) as run_js:
+            bridge._execute(
+                ("scroll", {"direction": "down", "amount": 450}, completed, response)
+            )
+
+        self.assertEqual(len(callbacks), 1)
+        self.assertIn("window.scrollBy(0, 450)", callbacks[0][0])
+        callbacks[0][1](900)
+        run_js.assert_called_once()
+        self.assertTrue(completed.is_set())
+        self.assertEqual(
+            response["result"],
+            "Página desplazada hacia abajo 450 px; posición vertical: 900 px",
+        )
+
+    def test_browser_scroll_rejects_invalid_direction_and_amount(self):
+        bridge = BrowserToolBridge(self.window)
+        with self.assertRaisesRegex(ValueError, "direction"):
+            bridge._scroll({"direction": "left"}, threading.Event(), {})
+        with self.assertRaisesRegex(ValueError, "amount"):
+            bridge._scroll(
+                {"direction": "up", "amount": -1}, threading.Event(), {}
+            )
+
+    def test_browser_press_key_sends_native_qt_key_events(self):
+        bridge = BrowserToolBridge(self.window)
+        completed = threading.Event()
+        response = {}
+
+        with (
+            patch.object(self.window.web_view, "setFocus") as set_focus,
+            patch("hercules_qt.QApplication.sendEvent") as send_event,
+            patch.object(self.window.web_view.page(), "runJavaScript") as run_js,
+        ):
+            bridge._interact(
+                "press_key", {"key": "[ArrowDown]"}, completed, response
+            )
+
+        set_focus.assert_called_once_with(Qt.FocusReason.OtherFocusReason)
+        run_js.assert_not_called()
+        self.assertEqual(send_event.call_count, 2)
+        events = [call.args[1] for call in send_event.call_args_list]
+        self.assertTrue(all(isinstance(event, QKeyEvent) for event in events))
+        self.assertEqual(
+            [event.type() for event in events],
+            [QEvent.Type.KeyPress, QEvent.Type.KeyRelease],
+        )
+        self.assertTrue(all(event.key() == Qt.Key.Key_Down for event in events))
+        self.assertTrue(all(event.text() == "" for event in events))
+        self.assertTrue(completed.is_set())
+        self.assertEqual(response["result"], "Tecla enviada: ArrowDown")
+
+    def test_browser_press_key_resolves_bracketed_names_and_rejects_unknown_keys(self):
+        key, text, name = BrowserToolBridge._resolve_qt_key("[Enter]")
+        self.assertEqual((key, text, name), (Qt.Key.Key_Return, "\r", "Enter"))
+
+        key, text, name = BrowserToolBridge._resolve_qt_key("a")
+        self.assertEqual((key, text, name), (Qt.Key.Key_A, "a", "a"))
+
+        with self.assertRaisesRegex(ValueError, "tecla no reconocida"):
+            BrowserToolBridge._resolve_qt_key("[NotAKey]")
 
     def test_browser_tool_bridge_validates_navigation_and_screenshot_paths(self):
         bridge = BrowserToolBridge(self.window)
