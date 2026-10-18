@@ -159,6 +159,26 @@ class QtDashboardLayoutTests(unittest.TestCase):
         self.assertIn("@e2 input text Correo", response["result"])
         self.assertEqual(bridge._active_refs, {"e1", "e2"})
 
+    def test_browser_snapshot_parses_serialized_javascript_result(self):
+        bridge = BrowserToolBridge(self.window)
+        completed = threading.Event()
+        response = {}
+        callbacks = []
+        with patch.object(
+            self.window.web_view.page(), "runJavaScript",
+            side_effect=lambda script, callback: callbacks.append((script, callback)),
+        ):
+            bridge._execute(("snapshot", {}, completed, response))
+        self.assertIn("JSON.stringify", callbacks[0][0])
+        callbacks[0][1](
+            '{"url":"https://example.test","title":"Example",'
+            '"text":"Contenido","controls":[]}'
+        )
+        self.assertTrue(completed.is_set())
+        self.assertIn("URL: https://example.test", response["result"])
+        self.assertIn("Título: Example", response["result"])
+        self.assertIn("Contenido", response["result"])
+
     def test_browser_click_and_fill_accept_snapshot_refs(self):
         bridge = BrowserToolBridge(self.window)
         bridge._active_refs = {"e1", "e2"}

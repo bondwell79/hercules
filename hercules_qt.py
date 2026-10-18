@@ -248,11 +248,16 @@ class BrowserToolBridge(QObject):
             const details = [e.tagName.toLowerCase(), e.getAttribute('type'), e.getAttribute('role')].filter(Boolean).join(' ');
             return {{ref, details, label}};
           }});
-          return {{url: location.href, title: document.title,
-            text: (document.body ? document.body.innerText : '').slice(0, 12000), controls}};
+          return JSON.stringify({{url: location.href, title: document.title,
+            text: (document.body ? document.body.innerText : '').slice(0, 12000), controls}});
         }})()"""
 
         def _received(result: Any) -> None:
+            if isinstance(result, str):
+                try:
+                    result = json.loads(result)
+                except (json.JSONDecodeError, TypeError):
+                    result = None
             if not isinstance(result, dict):
                 self._finish(completed, response, "ERROR: no se pudo leer la página")
                 return
