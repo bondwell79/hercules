@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import configparser
 import json
+import logging
 import queue
 import threading
+import time
 import traceback
 from collections import deque
 from pathlib import Path
@@ -879,6 +881,8 @@ class QtDashboard(QMainWindow):
         self._approval_dialog_open = False
         self._preauthorized_requests: set[str] = set()
         self._browser_current_dir = self.workspace
+        self._tree_signatures: Dict[int, Any] = {}
+        self._history_last_id = 0
 
         self._clear_unfinished_tasks()
         self._configure_window()
@@ -1262,24 +1266,59 @@ class QtDashboard(QMainWindow):
         if self.selected_task_id is not None and self.db.get_task(self.selected_task_id) is None:
             self._select_task(None)
 
+    def _subtasks_by_parent(self, tasks: list[Any]) -> Dict[int, list[Any]]:
+        """Obtiene las subtareas de todos los padres con una sola consulta."""
+        parent_ids = [task.id for task in tasks if task.id is not None]
+        many = getattr(self.db, "list_subtasks_many", None)
+        if callable(many):
+            return many(parent_ids)
+        return {pid: self.db.list_subtasks(pid) for pid in parent_ids}
+
     def _populate_task_tree(self, tree: QTreeWidget, tasks: list[Any]) -> None:
         selected_id = self.selected_task_id
+        subtasks_by_parent = self._subtasks_by_parent(tasks)
+        # Reconstruir el árbol cada segundo reinicia el scroll y la selección;
+        # solo se rehace si algo ha cambiado desde la última vez.
+        signature = (
+            selected_id,
+            tuple(
+                (
+                    task.id,
+                    task.title,
+                    task.status.value,
+                    tuple(
+                        (sub.id, sub.title, sub.status.value)
+                        for sub in subtasks_by_parent.get(task.id, [])
+                    ),
+                )
+                for task in tasks
+            ),
+        )
+        if self._tree_signatures.get(id(tree)) == signature:
+            return
+        self._tree_signatures[id(tree)] = signature
+        tree.setUpdatesEnabled(False)
         tree.blockSignals(True)
-        tree.clear()
-        for task in tasks:
-            item = self._task_item(task)
-            tree.addTopLevelItem(item)
-            if task.id is not None:
-                for subtask in self.db.list_subtasks(task.id):
+        try:
+            scroll_bar = tree.verticalScrollBar()
+            scroll_value = scroll_bar.value()
+            tree.clear()
+            for task in tasks:
+                item = self._task_item(task)
+                tree.addTopLevelItem(item)
+                for subtask in subtasks_by_parent.get(task.id, []):
                     item.addChild(self._task_item(subtask))
-            item.setExpanded(True)
-            if task.id == selected_id:
-                tree.setCurrentItem(item)
-            for index in range(item.childCount()):
-                child = item.child(index)
-                if child.data(0, Qt.ItemDataRole.UserRole) == selected_id:
-                    tree.setCurrentItem(child)
-        tree.blockSignals(False)
+                item.setExpanded(True)
+                if task.id == selected_id:
+                    tree.setCurrentItem(item)
+                for index in range(item.childCount()):
+                    child = item.child(index)
+                    if child.data(0, Qt.ItemDataRole.UserRole) == selected_id:
+                        tree.setCurrentItem(child)
+            scroll_bar.setValue(scroll_value)
+        finally:
+            tree.blockSignals(False)
+            tree.setUpdatesEnabled(True)
 
     def _task_item(self, task: Any) -> QTreeWidgetItem:
         item = QTreeWidgetItem([f"#{task.id}  {task.title}", task.status.value])
@@ -1324,7 +1363,9 @@ class QtDashboard(QMainWindow):
             self._select_task(int(task_id))
 
     def _select_task(self, task_id: Optional[int]) -> None:
+        """Muestra el historial completo de una tarea (render desde cero)."""
         self.selected_task_id = task_id
+        self._history_last_id = 0
         if task_id is None:
             self.history_title.setText("Historial de tarea (ninguna seleccionada)")
             self.history_view.clear()
@@ -1335,6 +1376,17 @@ class QtDashboard(QMainWindow):
             self.history_title.setText(f"Tarea #{task_id} (no encontrada)")
             self.history_view.clear()
             return
+        self._update_history_title(task)
+        self.history_view.setUpdatesEnabled(False)
+        try:
+            self.history_view.clear()
+            self._append_history_entries(task_id, self.db.get_history(task_id))
+        finally:
+            self.history_view.setUpdatesEnabled(True)
+        self.history_view.moveCursor(QTextCursor.MoveOperation.End)
+        self._refresh_context_bar()
+
+    def _update_history_title(self, task: Any) -> None:
         parent_suffix = (
             f" · subtarea de #{task.parent_task_id}"
             if task.parent_task_id is not None
@@ -1343,23 +1395,51 @@ class QtDashboard(QMainWindow):
         self.history_title.setText(
             f"Tarea #{task.id} — {task.title} [{task.status.value}]{parent_suffix}"
         )
-        cursor = self.history_view.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.Start)
-        cursor.select(QTextCursor.SelectionType.Document)
-        cursor.removeSelectedText()
-        colors = {
-            self.core.EventType.THOUGHT.value: ("ui_thought_fg", True),
-            self.core.EventType.TOOL_CALL.value: ("ui_tool_call_fg", False),
-            self.core.EventType.TOOL_RESULT.value: ("ui_tool_result_fg", False),
-            self.core.EventType.FINAL_ANSWER.value: ("ui_final_answer_fg", True),
-            self.core.EventType.ERROR.value: ("ui_error_fg", False),
-            self.core.EventType.STATUS_CHANGE.value: ("ui_status_change_fg", False),
-            self.core.EventType.INFO.value: ("ui_info_fg", False),
-            self.core.EventType.LOOP_DETECTED.value: ("ui_loop_detected_fg", False),
-            self.core.EventType.CONTEXT_COMPACTED.value: ("ui_context_compacted_fg", False),
-            self.core.EventType.CONTEXT_OVERFLOW.value: ("ui_context_overflow_fg", False),
+
+    def _refresh_history_incremental(self, task_id: int) -> None:
+        """
+        Añade solo las entradas nuevas al historial de la tarea seleccionada.
+
+        Repintar todo el historial en cada evento es O(n²) y congela la GUI en
+        tareas largas. Si la BD no admite lectura incremental se hace el render
+        completo.
+        """
+        fetch_after = getattr(self.db, "get_history_after", None)
+        if not callable(fetch_after):
+            self._select_task(task_id)
+            return
+        entries = fetch_after(task_id, self._history_last_id)
+        if not entries:
+            return
+        scroll_bar = self.history_view.verticalScrollBar()
+        follow_tail = scroll_bar.value() >= scroll_bar.maximum() - 4
+        self._append_history_entries(task_id, entries)
+        if follow_tail:
+            self.history_view.moveCursor(QTextCursor.MoveOperation.End)
+
+    def _history_colors(self) -> Dict[str, tuple[str, bool]]:
+        et = self.core.EventType
+        return {
+            et.THOUGHT.value: ("ui_thought_fg", True),
+            et.TOOL_CALL.value: ("ui_tool_call_fg", False),
+            et.TOOL_RESULT.value: ("ui_tool_result_fg", False),
+            et.FINAL_ANSWER.value: ("ui_final_answer_fg", True),
+            et.ERROR.value: ("ui_error_fg", False),
+            et.STATUS_CHANGE.value: ("ui_status_change_fg", False),
+            et.INFO.value: ("ui_info_fg", False),
+            et.LOOP_DETECTED.value: ("ui_loop_detected_fg", False),
+            et.CONTEXT_COMPACTED.value: ("ui_context_compacted_fg", False),
+            et.CONTEXT_OVERFLOW.value: ("ui_context_overflow_fg", False),
         }
-        for entry in self.db.get_history(task_id):
+
+    def _append_history_entries(self, task_id: int, entries: Any) -> None:
+        colors = self._history_colors()
+        cursor = QTextCursor(self.history_view.document())
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        for entry in entries:
+            entry_id = getattr(entry, "id", None)
+            if isinstance(entry_id, int):
+                self._history_last_id = max(self._history_last_id, entry_id)
             if self._is_command_execution_history_entry(entry):
                 continue
             event_type = getattr(entry.event_type, "value", entry.event_type)
@@ -1374,9 +1454,6 @@ class QtDashboard(QMainWindow):
                 f"[{entry.timestamp}] {label}\n{entry.content}\n\n",
                 text_format,
             )
-        self.history_view.setTextCursor(cursor)
-        self.history_view.moveCursor(QTextCursor.MoveOperation.End)
-        self._refresh_context_bar()
 
     def _is_command_execution_history_entry(self, entry: Any) -> bool:
         event_type = getattr(entry.event_type, "value", entry.event_type)
@@ -1425,6 +1502,9 @@ class QtDashboard(QMainWindow):
             try:
                 self.orchestrator.run(task, cancel_event=cancel_event)
             except Exception:
+                # Sin consola (build Nuitka) print_exc no deja rastro: se
+                # registra también en el log de aplicación.
+                logging.getLogger("hercules").exception("Fallo en la tarea %s", task.id)
                 traceback.print_exc()
                 self.ui_queue.put({"type": "orchestrator_error"})
             finally:
@@ -1476,13 +1556,60 @@ class QtDashboard(QMainWindow):
             5000,
         )
 
+    # Máximo de tiempo que un tick del temporizador dedica a vaciar la cola.
+    POLL_BUDGET_SECONDS = 0.05
+
     def _poll_queue(self) -> None:
-        while True:
+        """
+        Procesa los eventos pendientes sin monopolizar el hilo de la GUI.
+
+        - Presupuesto de tiempo por tick: una ráfaga de eventos no congela la
+          ventana; el resto se atiende en el siguiente tick.
+        - Los eventos repetidos de refresco (historial, estado, explorador) se
+          agrupan: basta un refresco por tick.
+        - Un fallo al tratar un evento se registra y no impide procesar los
+          demás ni mata el temporizador.
+        """
+        deadline = time.monotonic() + self.POLL_BUDGET_SECONDS
+        refresh_history_for: set[int] = set()
+        refresh_tasks = False
+        refresh_files = False
+        while time.monotonic() < deadline:
             try:
                 event = self.ui_queue.get_nowait()
             except queue.Empty:
                 break
+            event_type = event.get("type")
+            if event_type == "history_update":
+                task_id = event.get("task_id")
+                if task_id is not None and task_id == self.selected_task_id:
+                    refresh_history_for.add(task_id)
+                continue
+            if event_type == "status_change":
+                refresh_tasks = True
+                continue
+            if event_type == "refresh_file_browser":
+                refresh_files = True
+                continue
+            self._safe_handle_event(event)
+        if refresh_tasks:
+            self._safe_handle_event({"type": "status_change"})
+        for task_id in refresh_history_for:
+            try:
+                if task_id == self.selected_task_id:
+                    self._refresh_history_incremental(task_id)
+            except Exception:  # noqa: BLE001
+                logging.getLogger("hercules").exception("Error actualizando el historial")
+        if refresh_files:
+            self._safe_handle_event({"type": "refresh_file_browser"})
+
+    def _safe_handle_event(self, event: Dict[str, Any]) -> None:
+        try:
             self._handle_event(event)
+        except Exception:  # noqa: BLE001
+            logging.getLogger("hercules").exception(
+                "Error al procesar el evento de interfaz %r", event.get("type")
+            )
 
     def _handle_event(self, event: Dict[str, Any]) -> None:
         event_type = event.get("type")
@@ -1494,9 +1621,13 @@ class QtDashboard(QMainWindow):
                     latest = max(in_progress, key=lambda task: task.id or 0)
                     if latest.id is not None and latest.id != self.selected_task_id:
                         self._select_task(latest.id)
+            elif self.selected_task_id is not None:
+                task = self.db.get_task(self.selected_task_id)
+                if task is not None:
+                    self._update_history_title(task)
         elif event_type == "history_update":
             if event.get("task_id") == self.selected_task_id:
-                self._select_task(self.selected_task_id)
+                self._refresh_history_incremental(self.selected_task_id)
         elif event_type == "context_usage":
             task_id = event.get("task_id")
             if task_id is not None:

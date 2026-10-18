@@ -25,11 +25,18 @@ from __future__ import annotations
 import re
 import base64
 import configparser
+import contextlib
+import http.client
+import inspect
 import io
 import json
+import logging
+import logging.handlers
+import math
 import os
 import queue
 import signal
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -46,7 +53,7 @@ from enum import Enum
 from pathlib import Path
 
 
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 import computer_tools
 
@@ -55,9 +62,21 @@ import computer_tools
 # CONFIGURACIÓN (config.ini + variables de entorno)
 # ============================================================================
 
-CONFIG_PATH = os.environ.get("HERCULES_CONFIG", "config.ini")
-VERSION = "1.80"
-SUBTAREAS_INI_PATH = os.environ.get("HERCULES_SUBTAREAS_INI", "subtareas.ini")
+# Directorio de la aplicación. Las rutas relativas de configuración se
+# resuelven contra él (no contra el directorio de trabajo), de modo que
+# lanzar Hercules desde un acceso directo no cree otra BD ni otro workspace.
+SCRIPT_DIR = Path(__file__).parent.resolve()
+
+
+def _app_path(value: str) -> str:
+    """Convierte una ruta relativa en absoluta respecto a ``SCRIPT_DIR``."""
+    path = Path(value).expanduser()
+    return str(path if path.is_absolute() else SCRIPT_DIR / path)
+
+
+CONFIG_PATH = os.environ.get("HERCULES_CONFIG") or _app_path("config.ini")
+VERSION = "1.95"
+SUBTAREAS_INI_PATH = os.environ.get("HERCULES_SUBTAREAS_INI") or _app_path("subtareas.ini")
 
 # Patrones peligrosos organizados por categoría.
 # Cada entrada: (regex compilado, razón legible, severidad).
@@ -191,6 +210,8 @@ class Config:
             "no_authorization": "false",
             "command_timeout": "120",
             "workspace_path": "./workspace",
+            "log_max_mb": "20",
+            "log_retention_days": "14",
         },
         "UI": {
             "fullscreen": "false",
@@ -303,15 +324,65 @@ class Config:
 
     def reload(self) -> None:
         """Relee los valores por defecto y el fichero de configuración."""
-        self._parser = configparser.ConfigParser()
+        # Sin interpolación: un '%' en un valor (p. ej. un User-Agent) no
+        # debe provocar InterpolationSyntaxError al leerlo.
+        self._parser = configparser.ConfigParser(interpolation=None)
         # Cargar valores por defecto primero.
         self._parser.read_dict(self.DEFAULTS)
         # Sobrescribir con config.ini si existe.
         if os.path.exists(self._path):
             try:
                 self._parser.read(self._path, encoding="utf-8")
-            except configparser.Error as e:
+            except (configparser.Error, OSError, UnicodeDecodeError) as e:
                 print(f"[AVISO] Error leyendo {self._path}: {e}. Usando valores por defecto.")
+
+    # --- Lectura tolerante a valores inválidos ---
+
+    def _number(
+        self,
+        cast: Callable[[str], Any],
+        section: str,
+        key: str,
+        env_name: Optional[str] = None,
+        minimum: Optional[float] = None,
+    ) -> Any:
+        """
+        Lee un número de la variable de entorno o de config.ini.
+
+        Un valor mal formado, no finito o inferior a ``minimum`` no tumba la
+        aplicación: se avisa y se pasa al siguiente origen (y, al final, al
+        valor por defecto).
+        """
+        candidates: List[Tuple[str, str]] = []
+        env_val = os.environ.get(env_name) if env_name else None
+        if env_val:
+            candidates.append((f"variable de entorno {env_name}", env_val))
+        try:
+            candidates.append((f"[{section}] {key}", self._parser.get(section, key)))
+        except configparser.Error:
+            pass
+        for origin, raw in candidates:
+            try:
+                value = cast(raw.strip())
+                if isinstance(value, float) and not math.isfinite(value):
+                    raise ValueError("el valor debe ser finito")
+                if minimum is not None and value < minimum:
+                    raise ValueError(f"el valor debe ser >= {minimum:g}")
+                return value
+            except ValueError as exc:
+                print(f"[AVISO] Valor inválido en {origin}: {raw!r} ({exc}). Se ignora.")
+        return cast(self.DEFAULTS[section][key])
+
+    def _boolean(self, section: str, key: str, env_name: Optional[str] = None) -> bool:
+        """Lee un booleano; un valor inválido en config.ini usa el valor por defecto."""
+        env_val = os.environ.get(env_name) if env_name else None
+        if env_val is not None:
+            return _str_to_bool(env_val)
+        try:
+            return self._parser.getboolean(section, key)
+        except (ValueError, configparser.Error) as exc:
+            print(f"[AVISO] Valor booleano inválido en [{section}] {key}: {exc}. Se usa el valor por defecto.")
+            return _str_to_bool(self.DEFAULTS[section][key])
 
     # --- LLM ---
 
@@ -335,10 +406,7 @@ class Config:
 
     @property
     def llm_timeout(self) -> float:
-        env_val = os.environ.get("LLM_TIMEOUT")
-        if env_val:
-            return float(env_val)
-        return self._parser.getfloat("LLM", "timeout")
+        return self._number(float, "LLM", "timeout", "LLM_TIMEOUT", minimum=1)
 
     @property
     def llm_mode(self) -> str:
@@ -353,24 +421,15 @@ class Config:
 
     @property
     def llm_n_ctx(self) -> int:
-        env_val = os.environ.get("LLM_N_CTX")
-        if env_val:
-            return int(env_val)
-        return self._parser.getint("LLM", "n_ctx")
+        return self._number(int, "LLM", "n_ctx", "LLM_N_CTX", minimum=256)
 
     @property
     def llm_n_threads(self) -> int:
-        env_val = os.environ.get("LLM_N_THREADS")
-        if env_val:
-            return int(env_val)
-        return self._parser.getint("LLM", "n_threads")
+        return self._number(int, "LLM", "n_threads", "LLM_N_THREADS", minimum=1)
 
     @property
     def llm_n_gpu_layers(self) -> int:
-        env_val = os.environ.get("LLM_N_GPU_LAYERS")
-        if env_val:
-            return int(env_val)
-        return self._parser.getint("LLM", "n_gpu_layers")
+        return self._number(int, "LLM", "n_gpu_layers", "LLM_N_GPU_LAYERS", minimum=-1)
 
     # --- Workspace ---
 
@@ -390,17 +449,22 @@ class Config:
 
     @property
     def max_iterations(self) -> int:
-        env_val = os.environ.get("HERCULES_MAX_ITER")
-        if env_val:
-            return int(env_val)
-        return self._parser.getint("Agent", "max_iterations")
+        return self._number(int, "Agent", "max_iterations", "HERCULES_MAX_ITER", minimum=1)
 
     @property
     def loop_threshold(self) -> int:
-        env_val = os.environ.get("HERCULES_LOOP_THRESHOLD")
-        if env_val:
-            return int(env_val)
-        return self._parser.getint("Agent", "loop_threshold")
+        return self._number(int, "Agent", "loop_threshold", "HERCULES_LOOP_THRESHOLD", minimum=1)
+
+    @property
+    def log_max_bytes(self) -> int:
+        """Tamaño máximo (bytes) de cada fichero de log antes de rotarlo."""
+        megabytes = self._number(float, "Agent", "log_max_mb", "HERCULES_LOG_MAX_MB", minimum=0.1)
+        return int(megabytes * 1024 * 1024)
+
+    @property
+    def log_retention_days(self) -> int:
+        """Días que se conservan los logs antes de borrarlos."""
+        return self._number(int, "Agent", "log_retention_days", "HERCULES_LOG_RETENTION_DAYS", minimum=1)
 
     @property
     def context_compact_threshold(self) -> int:
@@ -410,14 +474,9 @@ class Config:
 
         Si el valor está fuera del rango válido, se limita a [1, 100].
         """
-        env_val = os.environ.get("HERCULES_CONTEXT_COMPACT_THRESHOLD")
-        if env_val:
-            try:
-                value = int(env_val)
-            except ValueError:
-                value = self._parser.getint("Agent", "context_compact_threshold")
-        else:
-            value = self._parser.getint("Agent", "context_compact_threshold")
+        value = self._number(
+            int, "Agent", "context_compact_threshold", "HERCULES_CONTEXT_COMPACT_THRESHOLD"
+        )
         return max(1, min(100, value))
 
     @property
@@ -430,13 +489,9 @@ class Config:
         umbral, se considera que no ha podido decidir y se aplica el
         fallback configurado en ``preauth_fallback_to_human``.
         """
-        env_val = os.environ.get("HERCULES_PREAUTH_TIMEOUT")
-        if env_val:
-            try:
-                return float(env_val)
-            except ValueError:
-                return self._parser.getfloat("Agent", "preauth_timeout")
-        return self._parser.getfloat("Agent", "preauth_timeout")
+        return self._number(
+            float, "Agent", "preauth_timeout", "HERCULES_PREAUTH_TIMEOUT", minimum=1
+        )
 
     @property
     def preauth_fallback_to_human(self) -> bool:
@@ -450,10 +505,7 @@ class Config:
         en caso de fallo del LLM (modo "fail-closed" sin intervención
         humana).
         """
-        env_val = os.environ.get("HERCULES_PREAUTH_FALLBACK")
-        if env_val is not None:
-            return _str_to_bool(env_val)
-        return self._parser.getboolean("Agent", "preauth_fallback_to_human")
+        return self._boolean("Agent", "preauth_fallback_to_human", "HERCULES_PREAUTH_FALLBACK")
 
     @property
     def no_authorization(self) -> bool:
@@ -464,10 +516,7 @@ class Config:
         Pensado para entornos de prueba/desarrollo. NO usar en producción:
         elimina por completo la barrera de seguridad HITL.
         """
-        env_val = os.environ.get("HERCULES_NO_AUTHORIZATION")
-        if env_val is not None:
-            return _str_to_bool(env_val)
-        return self._parser.getboolean("Agent", "no_authorization")
+        return self._boolean("Agent", "no_authorization", "HERCULES_NO_AUTHORIZATION")
 
     @property
     def command_timeout(self) -> float:
@@ -479,13 +528,9 @@ class Config:
         completo de procesos y la herramienta devuelve un error al modelo
         (con la salida parcial, si la hay).
         """
-        env_val = os.environ.get("HERCULES_COMMAND_TIMEOUT")
-        if env_val:
-            try:
-                return float(env_val)
-            except ValueError:
-                return self._parser.getfloat("Agent", "command_timeout")
-        return self._parser.getfloat("Agent", "command_timeout")
+        return self._number(
+            float, "Agent", "command_timeout", "HERCULES_COMMAND_TIMEOUT", minimum=1
+        )
 
     # --- UI ---
 
@@ -494,7 +539,7 @@ class Config:
         env_val = os.environ.get("HERCULES_FULLSCREEN")
         if env_val is not None:
             return _str_to_bool(env_val)
-        return self._parser.getboolean("UI", "fullscreen")
+        return self._boolean("UI", "fullscreen")
 
     @property
     def ui_bg_color(self) -> str:
@@ -650,7 +695,7 @@ class Config:
 
     @property
     def ui_font_size(self) -> int:
-        return self._parser.getint("UI", "font_size")
+        return self._number(int, "UI", "font_size", minimum=4)
 
     @property
     def ui_mono_font_family(self) -> str:
@@ -658,7 +703,7 @@ class Config:
 
     @property
     def ui_mono_font_size(self) -> int:
-        return self._parser.getint("UI", "mono_font_size")
+        return self._number(int, "UI", "mono_font_size", minimum=4)
 
     @property
     def ui_context_bar_bg(self) -> str:
@@ -909,7 +954,7 @@ class Config:
 CONFIG = Config()
 
 # Aliases para compatibilidad con el resto del código.
-DB_PATH = CONFIG.db_path
+DB_PATH = _app_path(CONFIG.db_path)
 MAX_ITERATIONS = CONFIG.max_iterations
 LOOP_THRESHOLD = CONFIG.loop_threshold
 CONTEXT_COMPACT_THRESHOLD = CONFIG.context_compact_threshold
@@ -925,12 +970,81 @@ LLM_N_THREADS = CONFIG.llm_n_threads
 LLM_N_GPU_LAYERS = CONFIG.llm_n_gpu_layers
 COMMAND_TIMEOUT = CONFIG.command_timeout
 
-# Directorio del script (para resolver rutas relativas como modelos/).
-SCRIPT_DIR = Path(__file__).parent.resolve()
 LOG_DIR = SCRIPT_DIR / "log"
 
+# Cada intercambio con el LLM incluye el historial completo, por lo que el
+# log crecería de forma cuadrática. Se acota cada entrada y cada fichero.
+_LLM_LOG_ENTRY_MAX_CHARS = 20_000
 
 _LLM_LOG_LOCK = threading.Lock()
+_LOGGER = logging.getLogger("hercules")
+
+
+def _cleanup_old_logs() -> None:
+    """Borra los logs más antiguos que ``log_retention_days``."""
+    cutoff = time.time() - CONFIG.log_retention_days * 86400
+    try:
+        candidates = list(LOG_DIR.glob("llm_*.txt*")) + list(LOG_DIR.glob("hercules.log*"))
+    except OSError:
+        return
+    for path in candidates:
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+        except OSError:
+            pass
+
+
+def _log_uncaught(
+    exc_type: type, exc_value: BaseException, exc_tb: Any, origin: str = "main"
+) -> None:
+    """Registra en fichero las excepciones que de otro modo se perderían."""
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+        return
+    _LOGGER.critical(
+        "Excepción no controlada (%s)", origin, exc_info=(exc_type, exc_value, exc_tb)
+    )
+    if sys.stderr is not None:
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+
+
+def setup_logging() -> None:
+    """
+    Configura el log de aplicación (con rotación) y captura las excepciones
+    no controladas de cualquier hilo.
+
+    Es imprescindible en builds sin consola (Nuitka ``--windows-console-mode
+    =disable``), donde ``traceback.print_exc()`` no deja rastro. Es
+    idempotente.
+    """
+    if getattr(setup_logging, "_done", False):
+        return
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        handler = logging.handlers.RotatingFileHandler(
+            LOG_DIR / "hercules.log",
+            maxBytes=CONFIG.log_max_bytes,
+            backupCount=3,
+            encoding="utf-8",
+        )
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s [%(threadName)s] %(message)s")
+        )
+        _LOGGER.addHandler(handler)
+        _LOGGER.setLevel(logging.INFO)
+        _LOGGER.propagate = False
+        _cleanup_old_logs()
+    except OSError as exc:
+        print(f"[AVISO] No se pudo inicializar el log de aplicación: {exc}")
+    sys.excepthook = _log_uncaught
+    threading.excepthook = lambda args: _log_uncaught(
+        args.exc_type,
+        args.exc_value,
+        args.exc_traceback,
+        origin=f"hilo {getattr(args.thread, 'name', '?')}",
+    )
+    setup_logging._done = True  # type: ignore[attr-defined]
 
 
 def _redact_image_payloads(value: Any) -> Any:
@@ -956,6 +1070,11 @@ def _log_llm_exchange(direction: str, endpoint: str, content: str) -> None:
         )
     except (json.JSONDecodeError, TypeError):
         logged_content = content
+    if len(logged_content) > _LLM_LOG_ENTRY_MAX_CHARS:
+        omitted = len(logged_content) - _LLM_LOG_ENTRY_MAX_CHARS
+        logged_content = (
+            logged_content[:_LLM_LOG_ENTRY_MAX_CHARS] + f"... [{omitted} caracteres omitidos]"
+        )
 
     now = datetime.now()
     log_path = LOG_DIR / f"llm_{now.strftime('%Y%m%d')}.txt"
@@ -966,14 +1085,26 @@ def _log_llm_exchange(direction: str, endpoint: str, content: str) -> None:
     )
     try:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
-        with _LLM_LOG_LOCK, log_path.open("a", encoding="utf-8") as log_file:
-            log_file.write(entry)
+        with _LLM_LOG_LOCK:
+            try:
+                if log_path.stat().st_size >= CONFIG.log_max_bytes:
+                    # Rotación: se conserva solo una copia anterior por día.
+                    os.replace(log_path, log_path.with_name(log_path.name + ".1"))
+            except FileNotFoundError:
+                pass
+            with log_path.open("a", encoding="utf-8") as log_file:
+                log_file.write(entry)
     except OSError:
         pass
 
 
+def _resolve_dir(value: str) -> Path:
+    """Resuelve una ruta de directorio relativa respecto a ``SCRIPT_DIR``."""
+    return Path(_app_path(value)).resolve()
+
+
 # Directorio de trabajo restringido para operaciones de archivos
-WORKSPACE_DIR = Path(CONFIG.workspace_path).resolve()
+WORKSPACE_DIR = _resolve_dir(CONFIG.workspace_path)
 WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -1145,6 +1276,96 @@ class LLMError(Exception):
     """Error genérico del conector LLM (modo local o HTTP)."""
 
 
+class LLMCancelled(LLMError):
+    """La petición al LLM se abortó porque el usuario canceló la tarea."""
+
+
+class LLMContextOverflow(LLMError):
+    """El prompt no cabe en el contexto del modelo."""
+
+
+class _HttpAbortHandle:
+    """Permite abortar desde otro hilo una petición HTTP bloqueada en red."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._sock: Optional[socket.socket] = None
+        self.aborted = threading.Event()
+
+    def register(self, sock: socket.socket) -> None:
+        with self._lock:
+            self._sock = sock
+        if self.aborted.is_set():
+            self._close(sock)
+
+    def abort(self) -> None:
+        self.aborted.set()
+        with self._lock:
+            sock = self._sock
+        if sock is not None:
+            self._close(sock)
+
+    @staticmethod
+    def _close(sock: socket.socket) -> None:
+        # shutdown() desbloquea el recv() pendiente de otro hilo; close() solo
+        # no lo garantiza en Windows.
+        for action in (lambda: sock.shutdown(socket.SHUT_RDWR), sock.close):
+            try:
+                action()
+            except OSError:
+                pass
+
+
+def _tracked_connection(base: type, handle: _HttpAbortHandle) -> type:
+    class _Tracked(base):  # type: ignore[misc, valid-type]
+        def connect(self) -> None:
+            super().connect()
+            handle.register(self.sock)
+
+    return _Tracked
+
+
+class _AbortableHTTPHandler(urllib.request.HTTPHandler):
+    def __init__(self, handle: _HttpAbortHandle) -> None:
+        super().__init__()
+        self._handle = handle
+
+    def http_open(self, req: urllib.request.Request) -> Any:
+        return self.do_open(_tracked_connection(http.client.HTTPConnection, self._handle), req)
+
+
+class _AbortableHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, handle: _HttpAbortHandle) -> None:
+        super().__init__()
+        self._handle = handle
+
+    def https_open(self, req: urllib.request.Request) -> Any:
+        return self.do_open(
+            _tracked_connection(http.client.HTTPSConnection, self._handle),
+            req,
+            context=self._context,
+        )
+
+
+# Fragmentos con los que los servidores indican que el prompt no cabe.
+_CONTEXT_OVERFLOW_MARKERS = (
+    "context length",
+    "context size",
+    "context window",
+    "maximum context",
+    "n_ctx",
+    "too many tokens",
+    "prompt is too long",
+    "exceeds the available context",
+    "reduce the length",
+)
+
+
+def _looks_like_context_overflow(message: str) -> bool:
+    lowered = message.lower()
+    return any(marker in lowered for marker in _CONTEXT_OVERFLOW_MARKERS)
+
+
 # ============================================================================
 # CAPA DE PERSISTENCIA (SQLite)
 # ============================================================================
@@ -1157,11 +1378,29 @@ class Database:
         self._lock = threading.Lock()
         self._init_schema()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextlib.contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        """
+        Abre una conexión, confirma (o revierte) la transacción y la CIERRA.
+
+        ``with sqlite3.connect(...)`` solo hace commit/rollback pero no cierra
+        la conexión, lo que dejaba descriptores abiertos y el fichero
+        bloqueado en Windows hasta que actuaba el recolector de basura.
+        """
         conn = sqlite3.connect(self.db_path, timeout=10.0, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        return conn
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            try:
+                # WAL permite lecturas de la GUI mientras el agente escribe.
+                conn.execute("PRAGMA journal_mode = WAL")
+                conn.execute("PRAGMA synchronous = NORMAL")
+            except sqlite3.DatabaseError:
+                pass
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def _init_schema(self) -> None:
         with self._lock, self._connect() as conn:
@@ -1307,6 +1546,28 @@ class Database:
             ).fetchall()
         return [self._row_to_task(r) for r in rows]
 
+    def list_subtasks_many(self, parent_task_ids: List[int]) -> Dict[int, List[Task]]:
+        """
+        Devuelve las subtareas de varias tareas padre con UNA sola consulta
+        (evita el patrón N+1 al refrescar el tablero desde la GUI).
+        """
+        if not parent_task_ids:
+            return {}
+        grouped: Dict[int, List[Task]] = {pid: [] for pid in parent_task_ids}
+        # SQLite limita el número de parámetros; se consulta por lotes.
+        for start in range(0, len(parent_task_ids), 500):
+            chunk = parent_task_ids[start:start + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            with self._lock, self._connect() as conn:
+                rows = conn.execute(
+                    f"SELECT * FROM tasks WHERE parent_task_id IN ({placeholders}) "
+                    f"ORDER BY id ASC",
+                    chunk,
+                ).fetchall()
+            for row in rows:
+                grouped.setdefault(row["parent_task_id"], []).append(self._row_to_task(row))
+        return grouped
+
     @staticmethod
     def _row_to_task(row: sqlite3.Row) -> Task:
         """Convierte una fila de la tabla ``tasks`` en un ``Task``."""
@@ -1365,10 +1626,14 @@ class Database:
         )
 
     def get_history(self, task_id: int) -> List[HistoryEntry]:
+        return self.get_history_after(task_id, 0)
+
+    def get_history_after(self, task_id: int, after_id: int) -> List[HistoryEntry]:
+        """Devuelve las entradas del historial posteriores a ``after_id``."""
         with self._lock, self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM history WHERE task_id = ? ORDER BY id ASC",
-                (task_id,),
+                "SELECT * FROM history WHERE task_id = ? AND id > ? ORDER BY id ASC",
+                (task_id, after_id),
             ).fetchall()
         return [
             HistoryEntry(
@@ -1440,9 +1705,10 @@ class LLMConnector:
         # tareas sigan corriendo en paralelo en otros aspectos
         # (ejecución de herramientas, escritura en BD, etc.).
         self._lock = threading.Lock()
-
-        if self.mode == "local":
-            self._init_local()
+        # En modo local el modelo se carga de forma diferida, en la primera
+        # inferencia (hilo del agente y bajo el lock). Cargarlo aquí bloqueaba
+        # el arranque de la GUI y un modelo ausente impedía abrir la aplicación;
+        # ahora el fallo llega como un error claro de la tarea.
 
     # --- Backend local (llama-cpp-python) ---
 
@@ -1505,6 +1771,7 @@ class LLMConnector:
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]],
         tool_choice: Optional[str],
+        stop_event: Optional[threading.Event] = None,
     ) -> Dict[str, Any]:
         """Inferencia local usando llama-cpp-python."""
         if self._local_llm is None:
@@ -1513,11 +1780,34 @@ class LLMConnector:
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = tool_choice or "auto"
-        _log_llm_exchange("SALIDA LOCAL", "llama-cpp-python", json.dumps(kwargs, ensure_ascii=False))
+        if stop_event is not None:
+            # Interrumpe la generación (no la evaluación del prompt) en cuanto
+            # se cancela la tarea, para liberar antes el modelo.
+            try:
+                from llama_cpp import StoppingCriteriaList  # type: ignore
+
+                if "stopping_criteria" in inspect.signature(
+                    self._local_llm.create_chat_completion
+                ).parameters:
+                    kwargs["stopping_criteria"] = StoppingCriteriaList(
+                        [lambda _ids, _logits: stop_event.is_set()]
+                    )
+            except (ImportError, TypeError, ValueError):
+                pass
+        _log_llm_exchange(
+            "SALIDA LOCAL",
+            "llama-cpp-python",
+            json.dumps(
+                {k: v for k, v in kwargs.items() if k != "stopping_criteria"},
+                ensure_ascii=False,
+            ),
+        )
         try:
             result = self._local_llm.create_chat_completion(**kwargs)
         except Exception as e:  # noqa: BLE001
             _log_llm_exchange("ENTRADA LOCAL ERROR", "llama-cpp-python", f"{type(e).__name__}: {e}")
+            if _looks_like_context_overflow(str(e)):
+                raise LLMContextOverflow(f"Contexto excedido en inferencia local: {e}") from e
             raise LLMError(f"Error en inferencia local: {e}") from e
         # llama-cpp-python devuelve un dict estilo OpenAI.
         if isinstance(result, dict):
@@ -1539,8 +1829,15 @@ class LLMConnector:
         tools: Optional[List[Dict[str, Any]]],
         tool_choice: Optional[str],
         timeout: Optional[float] = None,
+        cancel_event: Optional[threading.Event] = None,
     ) -> Dict[str, Any]:
-        """Envía una solicitud HTTP al endpoint y devuelve la respuesta cruda."""
+        """
+        Envía una solicitud HTTP al endpoint y devuelve la respuesta cruda.
+
+        Si se activa ``cancel_event`` mientras se espera la respuesta, el socket
+        se cierra desde un hilo auxiliar y se lanza ``LLMCancelled``, en lugar
+        de quedar bloqueado hasta el timeout de lectura.
+        """
         url = f"{self.base_url}/chat/completions"
         payload: Dict[str, Any] = {
             "model": self.model,
@@ -1568,28 +1865,87 @@ class LLMConnector:
             },
         )
 
+        effective_timeout = self.timeout if timeout is None else timeout
+        handle = _HttpAbortHandle()
+        opener = urllib.request.build_opener(
+            _AbortableHTTPHandler(handle), _AbortableHTTPSHandler(handle)
+        )
+
+        def _perform() -> Dict[str, Any]:
+            return self._perform_http(opener, req, url, effective_timeout, handle)
+
+        if cancel_event is None:
+            return _perform()
+
+        # En Windows cerrar un socket desde otro hilo NO interrumpe una lectura
+        # con timeout, así que la petición se ejecuta en un hilo auxiliar y
+        # aquí se espera con sondeo de ``cancel_event``. Al cancelar se vuelve
+        # de inmediato (liberando el lock del LLM); el hilo auxiliar termina
+        # solo al cerrarse el socket o agotarse su timeout.
+        outcome: Dict[str, Any] = {}
+
+        def _worker() -> None:
+            try:
+                outcome["value"] = _perform()
+            except BaseException as exc:  # noqa: BLE001
+                outcome["error"] = exc
+
+        worker = threading.Thread(target=_worker, daemon=True, name="llm-http")
+        worker.start()
+        while worker.is_alive():
+            worker.join(0.1)
+            if cancel_event.is_set() and worker.is_alive():
+                handle.abort()
+                raise LLMCancelled("Petición al LLM cancelada por el usuario")
+        if "error" in outcome:
+            raise outcome["error"]
+        return outcome["value"]
+
+    @staticmethod
+    def _perform_http(
+        opener: urllib.request.OpenerDirector,
+        req: urllib.request.Request,
+        url: str,
+        effective_timeout: float,
+        handle: _HttpAbortHandle,
+    ) -> Dict[str, Any]:
+        """Realiza la petición HTTP y traduce los errores a ``LLMError``."""
         try:
-            effective_timeout = self.timeout if timeout is None else timeout
-            with urllib.request.urlopen(req, timeout=effective_timeout) as resp:
+            with opener.open(req, timeout=effective_timeout) as resp:
                 body = resp.read().decode("utf-8")
                 _log_llm_exchange("ENTRADA", url, body)
                 return json.loads(body)
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", errors="replace")
             _log_llm_exchange("ENTRADA ERROR", url, detail)
+            if _looks_like_context_overflow(detail):
+                raise LLMContextOverflow(f"HTTP {e.code} desde {url}: {detail}") from e
             raise LLMError(f"HTTP {e.code} desde {url}: {detail}") from e
         except TimeoutError as e:
             # Timeout de lectura (el servidor aceptó la conexión pero no
             # respondió a tiempo); urllib no lo envuelve en URLError.
+            if handle.aborted.is_set():
+                raise LLMCancelled("Petición al LLM cancelada por el usuario") from e
             _log_llm_exchange("ENTRADA ERROR", url, f"{type(e).__name__}: {e}")
             raise LLMError(
                 f"Timeout ({effective_timeout:g}s) esperando respuesta de {url}"
             ) from e
         except urllib.error.URLError as e:
+            if handle.aborted.is_set():
+                raise LLMCancelled("Petición al LLM cancelada por el usuario") from e
             _log_llm_exchange("ENTRADA ERROR", url, f"{type(e).__name__}: {e.reason}")
             raise LLMError(f"No se pudo conectar con {url}: {e.reason}") from e
-        except json.JSONDecodeError as e:
-            raise LLMError(f"Respuesta JSON inválida del LLM: {e}") from e
+        except ValueError as e:
+            # JSONDecodeError y UnicodeDecodeError son subclases de ValueError.
+            if handle.aborted.is_set():
+                raise LLMCancelled("Petición al LLM cancelada por el usuario") from e
+            raise LLMError(f"Respuesta inválida del LLM: {e}") from e
+        except (OSError, http.client.HTTPException) as e:
+            # Corte de conexión durante la lectura (no lo envuelve URLError).
+            if handle.aborted.is_set():
+                raise LLMCancelled("Petición al LLM cancelada por el usuario") from e
+            _log_llm_exchange("ENTRADA ERROR", url, f"{type(e).__name__}: {e}")
+            raise LLMError(f"Conexión interrumpida con {url}: {e}") from e
 
     # --- Dispatcher ---
 
@@ -1599,6 +1955,7 @@ class LLMConnector:
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[str] = None,
         timeout: Optional[float] = None,
+        cancel_event: Optional[threading.Event] = None,
     ) -> Dict[str, Any]:
         """
         Envía una solicitud de chat y devuelve la respuesta cruda.
@@ -1612,25 +1969,49 @@ class LLMConnector:
 
         ``timeout`` (opcional) acota tanto la espera del lock como la
         petición HTTP, para que una consulta abandonada por el llamador no
-        siga bloqueando a las demás. La inferencia local no es interrumpible.
+        siga bloqueando a las demás.
+
+        ``cancel_event`` (opcional) aborta la espera del lock y la petición
+        en curso lanzando ``LLMCancelled``. En modo local solo se interrumpe
+        la fase de generación, no la evaluación inicial del prompt.
         """
-        if timeout is None:
-            acquired = self._lock.acquire()
-        else:
-            started = time.monotonic()
-            acquired = self._lock.acquire(timeout=timeout)
-            if not acquired:
-                raise LLMError(
-                    f"Timeout ({timeout:g}s) esperando a que el LLM quede libre"
-                )
-            timeout = max(0.1, timeout - (time.monotonic() - started))
+        started = time.monotonic()
+        deadline = None if timeout is None else started + timeout
+        # La espera del lock se hace a ráfagas cortas para poder atender la
+        # cancelación y el plazo: un hilo abandonado (p. ej. la consulta de
+        # preautorización) no debe dejar bloqueado al agente indefinidamente.
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                raise LLMCancelled("Petición al LLM cancelada por el usuario")
+            wait = 0.2
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise LLMError(
+                        f"Timeout ({timeout:g}s) esperando a que el LLM quede libre"
+                    )
+                wait = min(wait, remaining)
+            if self._lock.acquire(timeout=wait):
+                break
         try:
+            if cancel_event is not None and cancel_event.is_set():
+                raise LLMCancelled("Petición al LLM cancelada por el usuario")
+            http_timeout = (
+                None if deadline is None else max(0.1, deadline - time.monotonic())
+            )
             if self.mode == "local":
-                return self._chat_local(messages, tools, tool_choice)
-            return self._chat_http(messages, tools, tool_choice, timeout=timeout)
+                return self._chat_local(
+                    messages, tools, tool_choice, stop_event=cancel_event
+                )
+            return self._chat_http(
+                messages,
+                tools,
+                tool_choice,
+                timeout=http_timeout,
+                cancel_event=cancel_event,
+            )
         finally:
-            if acquired:
-                self._lock.release()
+            self._lock.release()
 
     @staticmethod
     def _extract_tool_calls_from_text(
@@ -3008,6 +3389,13 @@ FORMATO DE RESPUESTA:
 """
 
 
+_CHARS_PER_TOKEN = 3
+# Fracción máxima del contexto que puede ocupar un único resultado de herramienta.
+_TOOL_OUTPUT_CONTEXT_SHARE = 0.25
+# Marca que delimita el resumen añadido al prompt tras compactar el contexto.
+_COMPACTION_MARKER = "CONTEXTO COMPACTADO:"
+
+
 class Agent:
     """
     Bucle de razonamiento del agente (estilo ReAct).
@@ -3076,11 +3464,12 @@ class Agent:
         Compacta el historial de mensajes.
 
         Conserva el system prompt y el prompt original del usuario, y
-        reemplaza todos los mensajes intermedios por un único mensaje
-        de resumen que incluye las últimas llamadas a herramientas y
-        sus resultados. Esto le da al modelo un contexto reducido pero
-        con la información esencial para replantear su estrategia y
-        salir del bucle.
+        reemplaza todos los mensajes intermedios por un resumen que incluye
+        las últimas llamadas a herramientas y sus resultados. El resumen se
+        FUSIONA en el mensaje de usuario original (y la última captura, si
+        la hay, se adjunta a ese mismo mensaje): así el historial resultante
+        es ``[system, user]`` y nunca dos mensajes ``user`` seguidos, que
+        las plantillas de chat estrictas rechazan ("roles must alternate").
         """
         if len(messages) <= 2:
             return messages
@@ -3089,11 +3478,29 @@ class Agent:
         user_msg = messages[1]
         middle = messages[2:]
 
+        # Si el prompt ya contenía el resumen de una compactación anterior,
+        # se separa para no acumular resúmenes y conservar su progreso.
+        original_prompt, previous_summary = self._split_compaction(user_msg.get("content"))
+
         summary_lines: List[str] = [
-            "CONTEXTO COMPACTADO: Se han eliminado los mensajes intermedios.",
+            f"{_COMPACTION_MARKER} Se han eliminado los mensajes intermedios.",
             "A continuación se resume el progreso realizado hasta ahora:",
             "",
         ]
+        if previous_summary:
+            # Solo se conserva el cuerpo (sin cabecera ni avisos repetidos) y
+            # acotado, para que el resumen no crezca con cada compactación.
+            body = "\n".join(
+                line
+                for line in previous_summary.splitlines()
+                if not line.startswith(
+                    (_COMPACTION_MARKER, "A continuación se resume", "IMPORTANTE:", "Resumen de compactaciones")
+                )
+            ).strip()
+            if body:
+                summary_lines.append("Resumen de compactaciones anteriores:")
+                summary_lines.append(body[-1_500:])
+                summary_lines.append("")
 
         latest_image_message = next(
             (
@@ -3152,10 +3559,7 @@ class Agent:
                 "y qué no has podido completar."
             )
 
-        summary_msg = {
-            "role": "user",
-            "content": "\n".join(summary_lines),
-        }
+        summary_text = "\n".join(summary_lines)
 
         if reason == "bucle":
             self._log(
@@ -3176,23 +3580,51 @@ class Agent:
                     f"Iniciando compactación del contexto."
                 ),
             )
-        compacted_count = 4 if latest_image_message is not None else 3
-        summary_description = "system + user + resumen"
+        summary_description = "system + user con resumen"
         if latest_image_message is not None:
-            summary_description += " + imagen"
+            summary_description += " e imagen"
         self._log(
             task_id,
             EventType.CONTEXT_COMPACTED,
             (
                 f"Contexto compactado: {len(messages)} mensajes → "
-                f"{compacted_count} mensajes ({summary_description})."
+                f"2 mensajes ({summary_description})."
             ),
         )
 
-        compacted = [system_msg, user_msg, summary_msg]
-        if latest_image_message is not None:
-            compacted.append(latest_image_message)
-        return compacted
+        merged_text = f"{original_prompt}\n\n{summary_text}"
+        if latest_image_message is None:
+            merged_content: Any = merged_text
+        else:
+            image_parts = [
+                part
+                for part in latest_image_message["content"]
+                if isinstance(part, dict) and part.get("type") == "image_url"
+            ]
+            merged_content = [{"type": "text", "text": merged_text}, *image_parts]
+        merged_user = {**user_msg, "role": "user", "content": merged_content}
+        return [system_msg, merged_user]
+
+    @staticmethod
+    def _split_compaction(content: Any) -> Tuple[Any, str]:
+        """
+        Separa el prompt original del resumen de una compactación previa.
+
+        Devuelve ``(prompt_original, resumen_previo)``; el resumen es ``""`` si
+        el mensaje nunca se compactó.
+        """
+        if isinstance(content, list):
+            text = " ".join(
+                str(part.get("text", ""))
+                for part in content
+                if isinstance(part, dict) and part.get("type") == "text"
+            )
+        else:
+            text = str(content or "")
+        head, marker, tail = text.partition(f"\n\n{_COMPACTION_MARKER}")
+        if not marker:
+            return text, ""
+        return head, f"{_COMPACTION_MARKER}{tail}"
 
     # --- Ejecución de tool calls ---
 
@@ -3303,18 +3735,21 @@ class Agent:
     @staticmethod
     def _estimate_context_usage(
         messages: List[Dict[str, Any]],
+        extra_chars: int = 0,
     ) -> Tuple[int, int, int]:
         """
         Estima el uso de contexto en tokens a partir de los mensajes.
 
-        Aproximación: 1 token ≈ 4 caracteres (estimación conservadora
-        para modelos BPE como LLaMA / Qwen). Se cuentan los caracteres
-        de ``content`` y de los argumentos serializados de ``tool_calls``.
+        Aproximación: 1 token ≈ 3 caracteres (estimación conservadora para
+        texto en español y código con tokenizadores BPE como LLaMA / Qwen).
+        Se cuentan los caracteres de ``content`` y de los argumentos
+        serializados de ``tool_calls``. ``extra_chars`` permite añadir el
+        tamaño del esquema de herramientas, que también consume contexto.
 
         Devuelve ``(tokens_estimados, max_tokens, porcentaje)``.
         El porcentaje se limita a ``[0, 100]``.
         """
-        total_chars = 0
+        total_chars = max(0, int(extra_chars))
         for msg in messages:
             content = msg.get("content") or ""
             if isinstance(content, str):
@@ -3338,18 +3773,35 @@ class Agent:
                         name = fn.get("name", "")
                         if isinstance(name, str):
                             total_chars += len(name)
-        estimated_tokens = total_chars // 4
+        estimated_tokens = total_chars // _CHARS_PER_TOKEN
         max_tokens = max(1, LLM_N_CTX)
         percent = min(100, int(estimated_tokens * 100 / max_tokens))
         return estimated_tokens, LLM_N_CTX, percent
+
+    @staticmethod
+    def _fit_tool_output(output: str) -> str:
+        """
+        Acota el resultado de una herramienta que se añade al contexto.
+
+        Un único resultado enorme (lectura de un archivo grande, salida de un
+        comando) no debe poder ocupar por sí solo el contexto del modelo.
+        """
+        max_chars = max(2_000, int(LLM_N_CTX * _CHARS_PER_TOKEN * _TOOL_OUTPUT_CONTEXT_SHARE))
+        if len(output) <= max_chars:
+            return output
+        omitted = len(output) - max_chars
+        return output[:max_chars] + f"\n... [recortado para el contexto: {omitted} caracteres omitidos]"
 
     def _publish_context_usage(
         self,
         task_id: int,
         messages: List[Dict[str, Any]],
+        extra_chars: int = 0,
     ) -> None:
         """Publica el uso de contexto estimado en la cola de la UI."""
-        tokens_used, max_tokens, percent = self._estimate_context_usage(messages)
+        tokens_used, max_tokens, percent = self._estimate_context_usage(
+            messages, extra_chars
+        )
         self.ui_queue.put(
             {
                 "type": "context_usage",
@@ -3396,6 +3848,14 @@ class Agent:
         # Detector de bucles: si el modelo repite la misma respuesta
         # LOOP_THRESHOLD veces, se compacta el contexto.
         loop_detector = LoopDetector(LOOP_THRESHOLD)
+        # El esquema de herramientas viaja en cada petición y consume contexto.
+        tools_schema = self.tools.to_openai_tools()
+        schema_chars = len(json.dumps(tools_schema, ensure_ascii=False, default=str))
+        llm_kwargs: Dict[str, Any] = {}
+        if cancel_event is not None:
+            llm_kwargs["cancel_event"] = cancel_event
+        # Reintentos tras un error de desbordamiento devuelto por el servidor.
+        overflow_retries = 0
         try:
             for iteration in range(1, MAX_ITERATIONS + 1):
                 if cancel_event is not None and cancel_event.is_set():
@@ -3414,7 +3874,11 @@ class Agent:
                 # del límite n_ctx, se compacta el contexto para evitar que
                 # el modelo se quede sin espacio o degrade la respuesta.
                 # Esto es independiente de la detección de bucles.
-                _, _, current_percent = self._estimate_context_usage(messages)
+                # Tras compactar se envía la petición en esta misma iteración:
+                # si ni siquiera [system, user] cabe bajo el umbral, repetir la
+                # compactación no ayudaría y agotaría las iteraciones sin llamar
+                # al modelo, así que se deja decidir al servidor.
+                _, _, current_percent = self._estimate_context_usage(messages, schema_chars)
                 if current_percent >= CONTEXT_COMPACT_THRESHOLD and len(messages) > 2:
                     self._log(
                         task_id,
@@ -3427,9 +3891,21 @@ class Agent:
                     )
                     messages = self._compact_context(task_id, messages, reason="exceso_contexto")
                     loop_detector.reset()
-                    no_tool_streak = 0
-                    self._publish_context_usage(task_id, messages)
-                    continue
+                    # no_tool_streak se conserva: reiniciarlo en cada compactación
+                    # impediría que el modelo llegase nunca a la respuesta final.
+                    self._publish_context_usage(task_id, messages, schema_chars)
+                    _, _, current_percent = self._estimate_context_usage(messages, schema_chars)
+                if current_percent >= CONTEXT_COMPACT_THRESHOLD and len(messages) <= 2:
+                    self._log(
+                        task_id,
+                        EventType.INFO,
+                        (
+                            f"⚠ El prompt y las herramientas ocupan el {current_percent}% "
+                            f"del contexto y no se puede compactar más. Se intenta "
+                            f"enviar igualmente; si el modelo lo rechaza, acorta la "
+                            f"instrucción o aumenta n_ctx."
+                        ),
+                    )
 
                 # Forzar uso de herramientas solo si el modelo aún no las ha usado.
                 tool_choice = "required" if no_tool_streak >= 1 else "auto"
@@ -3437,9 +3913,33 @@ class Agent:
                 try:
                     raw = self.llm.chat(
                         messages,
-                        tools=self.tools.to_openai_tools(),
+                        tools=tools_schema,
                         tool_choice=tool_choice,
+                        **llm_kwargs,
                     )
+                except LLMCancelled:
+                    self._log(task_id, EventType.INFO, "Tarea abortada por el usuario.")
+                    self._set_status(task_id, TaskStatus.CANCELLED)
+                    return
+                except LLMContextOverflow as e:
+                    if len(messages) > 2 and overflow_retries < 2:
+                        overflow_retries += 1
+                        self._log(task_id, EventType.INFO, f"El servidor rechazó el contexto: {e}")
+                        messages = self._compact_context(task_id, messages, reason="exceso_contexto")
+                        loop_detector.reset()
+                        no_tool_streak = 0
+                        self._publish_context_usage(task_id, messages, schema_chars)
+                        continue
+                    self._log(
+                        task_id,
+                        EventType.ERROR,
+                        (
+                            f"Error LLM: el contexto no cabe en el modelo ({e}). "
+                            f"Acorta la instrucción o aumenta 'n_ctx'."
+                        ),
+                    )
+                    self._set_status(task_id, TaskStatus.FAILED)
+                    return
                 except LLMError as e:
                     self._log(task_id, EventType.ERROR, f"Error LLM: {e}")
                     self._set_status(task_id, TaskStatus.FAILED)
@@ -3464,7 +3964,7 @@ class Agent:
                     # de nuevo con herramientas.
                     no_tool_streak = 0
                     # Publicar uso de contexto tras la compactación.
-                    self._publish_context_usage(task_id, messages)
+                    self._publish_context_usage(task_id, messages, schema_chars)
                     continue
 
                 if content:
@@ -3561,7 +4061,7 @@ class Agent:
                         {
                             "role": "tool",
                             "tool_call_id": result.tool_call_id,
-                            "content": result.output,
+                            "content": self._fit_tool_output(result.output),
                         }
                     )
                     if result.image_data:
@@ -3582,7 +4082,7 @@ class Agent:
 
                 # Publicar uso de contexto tras procesar las herramientas
                 # de esta iteración para que la UI actualice la barra.
-                self._publish_context_usage(task_id, messages)
+                self._publish_context_usage(task_id, messages, schema_chars)
 
             # Agotó iteraciones.
             self._log(
@@ -3593,12 +4093,18 @@ class Agent:
             self._set_status(task_id, TaskStatus.FAILED)
 
         except Exception as e:  # noqa: BLE001
-            self._log(
-                task_id,
-                EventType.ERROR,
-                f"Error inesperado en el agente: {e}\n{traceback.format_exc(limit=3)}",
-            )
-            self._set_status(task_id, TaskStatus.FAILED)
+            _LOGGER.exception("Error inesperado en el agente (tarea %s)", task_id)
+            detail = f"Error inesperado en el agente: {e}\n{traceback.format_exc(limit=3)}"
+            # Si la propia BD es la que falla, no se debe perder el estado FAILED
+            # ni propagar la excepción: se intenta cada paso por separado.
+            try:
+                self._log(task_id, EventType.ERROR, detail)
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("No se pudo registrar el error de la tarea %s", task_id)
+            try:
+                self._set_status(task_id, TaskStatus.FAILED)
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("No se pudo marcar como FAILED la tarea %s", task_id)
 
 
 # ============================================================================
@@ -3664,13 +4170,52 @@ class TaskOrchestrator:
         parent_task: Task,
         cancel_event: Optional[threading.Event] = None,
     ) -> None:
-        """Ejecuta secuencialmente el plan declarado en ``subtareas.ini``."""
+        """
+        Ejecuta secuencialmente el plan declarado en ``subtareas.ini``.
+
+        Garantiza que la tarea padre (y sus subtareas) terminen en un estado
+        terminal aunque se produzca una excepción inesperada: de lo contrario
+        quedarían en PENDING/IN_PROGRESS para siempre, visibles como "activas"
+        hasta que el siguiente arranque las borrase.
+        """
         if parent_task.id is None:
             return
+        try:
+            self._run_plan(parent_task, cancel_event)
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.exception("Error inesperado orquestando la tarea %s", parent_task.id)
+            self._abort_after_error(parent_task.id, exc)
+
+    def _abort_after_error(self, parent_id: int, exc: BaseException) -> None:
+        """Marca como FAILED el padre y las subtareas sin terminar tras un error."""
+        reason = f"error inesperado en la orquestación: {type(exc).__name__}: {exc}"
+        try:
+            for child in self.db.list_subtasks(parent_id):
+                if child.status not in TaskStatus.finished() and child.id is not None:
+                    self.db.update_task_status(
+                        child.id, TaskStatus.FAILED, final_answer=f"FAILED: {reason}"
+                    )
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("No se pudieron cerrar las subtareas de la tarea %s", parent_id)
+        try:
+            self._fail_parent(parent_id, reason)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("No se pudo marcar como FAILED la tarea %s", parent_id)
+
+    def _run_plan(
+        self,
+        parent_task: Task,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> None:
         parent_id = parent_task.id
+        assert parent_id is not None
         if cancel_event is not None and cancel_event.is_set():
             self._cancel_parent(parent_id, "Tarea abortada por el usuario.")
             return
+        self.db.update_task_status(parent_id, TaskStatus.IN_PROGRESS)
+        self.ui_queue.put(
+            {"type": "status_change", "task_id": parent_id, "status": TaskStatus.IN_PROGRESS.value}
+        )
 
         plan = _load_subtask_plan()
         if not plan:
@@ -3997,6 +4542,7 @@ class Dashboard:
         # y se devuelve False para activar el fallback configurado.
         response_holder: Dict[str, Any] = {}
         error_holder: Dict[str, BaseException] = {}
+        abort_event = threading.Event()
 
         def _call_llm() -> None:
             try:
@@ -4006,28 +4552,32 @@ class Dashboard:
                         {"role": "user", "content": user_msg},
                     ],
                     timeout=timeout_s,
+                    cancel_event=abort_event,
                 )
             except BaseException as e:  # noqa: BLE001
                 error_holder["error"] = e
 
         timeout_s = max(1.0, float(CONFIG.preauth_timeout))
-        worker = threading.Thread(target=_call_llm, daemon=True)
+        worker = threading.Thread(target=_call_llm, daemon=True, name="preauth-llm")
         worker.start()
         worker.join(timeout=timeout_s + 1.0)
 
         if worker.is_alive():
             # El LLM no respondió a tiempo. Por seguridad, no preautorizar.
+            # Se aborta la petición para que el hilo abandonado libere el lock
+            # del LLM en lugar de bloquear al agente hasta que termine.
+            abort_event.set()
             return False, f"timeout ({timeout_s:.0f}s) sin respuesta del LLM"
         if "error" in error_holder:
             err = error_holder["error"]
             return False, f"error del LLM: {type(err).__name__}: {err}"
         response = response_holder.get("response", {})
-        content = (
-            response.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-            .strip()
-        )
+        try:
+            content = str(
+                (response.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+            ).strip()
+        except (AttributeError, IndexError, TypeError):
+            content = ""
 
         # Parsear respuesta: buscar SI/NO al inicio (tolerando signos de
         # interrogación/exclamación y espacios).
@@ -4218,7 +4768,22 @@ def _update_config_file(path: str, updates: Dict[str, Dict[str, str]]) -> None:
 # PUNTO DE ENTRADA
 # ============================================================================
 
+def _report_fatal_startup_error(message: str) -> None:
+    """Informa de un fallo de arranque aunque no haya consola (build Nuitka)."""
+    _LOGGER.critical(message)
+    if sys.stderr is not None:
+        print(message, file=sys.stderr)
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            ctypes.windll.user32.MessageBoxW(None, message[:1500], "Hercules", 0x10)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def main() -> None:
+    setup_logging()
     try:
         from hercules_qt import main as run_qt_ui
     except ModuleNotFoundError as exc:
@@ -4227,15 +4792,32 @@ def main() -> None:
                 f'"{sys.executable}" -m pip install '
                 "PySide6==6.12.0 PySide6-WebEngine==6.12.0.140"
             )
-            raise SystemExit(
+            message = (
                 "No se encuentra Qt (PySide6) en este intérprete.\n"
                 "Instala las dependencias usando el mismo Python con el que "
                 "ejecutas Hercules:\n"
                 f"  {install_command}\n"
                 "En Windows también puedes iniciar Hercules con run.bat."
-            ) from exc
+            )
+            _report_fatal_startup_error(message)
+            raise SystemExit(1) from exc
+        # Cualquier otro módulo ausente es un error real: se propaga tal cual
+        # en lugar de caer en una variable sin definir.
+        raise
 
-    run_qt_ui(core_module=sys.modules[__name__])
+    try:
+        code = run_qt_ui(core_module=sys.modules[__name__])
+    except LLMError as exc:
+        _report_fatal_startup_error(f"No se pudo iniciar Hercules: {exc}")
+        raise SystemExit(1) from exc
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.exception("Fallo fatal al ejecutar la interfaz")
+        _report_fatal_startup_error(
+            f"Hercules se cerró por un error inesperado: {type(exc).__name__}: {exc}\n"
+            f"Detalles en {LOG_DIR / 'hercules.log'}"
+        )
+        raise SystemExit(1) from exc
+    raise SystemExit(code if isinstance(code, int) else 0)
 
 
 if __name__ == "__main__":

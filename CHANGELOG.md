@@ -6,6 +6,18 @@ Todos los cambios notables se documentan aquí. Formato basado en [Keep a Change
 
 ## [Unreleased]
 
+### Fixed (robustez para producción)
+- **Abortar ya interrumpe la petición al LLM.** `LLMConnector.chat()` acepta `cancel_event`: la espera del lock y la petición HTTP se cancelan en ~0,1 s (nueva excepción `LLMCancelled`) en lugar de bloquear hasta `timeout`. En modo local se detiene además la generación.
+- **La consulta de preautorización ya no deja el LLM bloqueado:** al expirar su plazo aborta su petición y libera el lock; la espera del lock respeta el timeout y la cancelación.
+- **Compactación de contexto:** el resumen se fusiona en el mensaje de usuario original (nunca dos `user` seguidos), no se acumula entre compactaciones y la petición se envía en la misma iteración (un prompt enorme ya no agota las iteraciones sin llamar al modelo). La estimación de tokens cuenta el esquema de herramientas (3 caracteres/token), los resultados de herramienta se acotan y un error de desbordamiento del servidor (`LLMContextOverflow`) dispara una compactación con reintento.
+- **Tareas huérfanas:** `TaskOrchestrator.run` marca la tarea padre como `IN_PROGRESS` y, ante cualquier excepción, deja padre y subtareas en `FAILED`.
+- **Arranque:** los valores numéricos/booleanos inválidos de `config.ini` o de variables de entorno ya no tumban la aplicación (se avisa y se usa el valor por defecto); `%` en un valor no provoca error de interpolación; el modelo local se carga en la primera inferencia (no bloquea la GUI ni impide abrirla si falta); `config.ini`, `hercules.db`, `workspace` y `subtareas.ini` se resuelven respecto al directorio de la aplicación, no al directorio de trabajo.
+- **`main()`:** un módulo ausente distinto de PySide6 ya no provoca `UnboundLocalError`; los fallos de arranque se muestran en un cuadro de diálogo (builds sin consola) y se registran.
+- **GUI fluida con tareas largas:** el historial se actualiza de forma incremental, la cola de eventos se vacía con presupuesto de tiempo y agrupando refrescos, un evento defectuoso ya no bloquea al resto, y el tablero de tareas usa una sola consulta para las subtareas y solo se reconstruye si cambia.
+- **SQLite:** las conexiones se cierran realmente (antes solo se confirmaba la transacción) y se usa modo WAL.
+- **Logs:** `log/hercules.log` con rotación recoge las excepciones no controladas de cualquier hilo; los logs de intercambio con el LLM se acotan por entrada y por tamaño, y se purgan por antigüedad (`log_max_mb`, `log_retention_days` en `[Agent]`).
+- Nueva suite `test_produccion.py` incluida en `test_global.py`.
+
 ### Added
 - **Barra de título moderna (Windows 10/11 vía DWM).** Nueva función `_apply_modern_titlebar()` que personaliza la barra de título nativa usando la API DWM (`DwmSetWindowAttribute`) sin dependencias externas. Cuatro estilos configurables desde `[UI]` en `config.ini`:
   - `titlebar_style = "system"` — aspecto clásico de Windows (por defecto).

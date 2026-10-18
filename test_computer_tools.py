@@ -59,6 +59,7 @@ class ToolTests(unittest.TestCase):
             "browser_snapshot": hercules.RiskLevel.SAFE,
             "browser_click": hercules.RiskLevel.SAFE,
             "browser_fill": hercules.RiskLevel.SAFE,
+            "browser_scroll": hercules.RiskLevel.SAFE,
             "browser_press_key": hercules.RiskLevel.SAFE,
             "browser_screenshot": hercules.RiskLevel.SAFE,
             "browser_back": hercules.RiskLevel.SAFE,

@@ -15,6 +15,7 @@ Suites ejecutadas (en este orden):
     7. test_modern_titlebar.py   — opciones de barra de título en Configuración Qt.
     8. test_welcome_dialog.py    — diálogo Qt de bienvenida durante el arranque.
     9. test_computer_tools.py    — herramientas autorizadas de captura y ratón.
+   10. test_produccion.py        — robustez: cancelación, contexto, config, BD, GUI.
 
 Cada suite se lanza como subproceso independiente para mantener el
 aislamiento entre ellas (cada una crea y destruye su propio entorno
@@ -60,6 +61,7 @@ SUITES: List[tuple] = [
     (SCRIPT_DIR / "test_modern_titlebar.py", "test_modern_titlebar"),
     (SCRIPT_DIR / "test_welcome_dialog.py",  "test_welcome_dialog"),
     (SCRIPT_DIR / "test_computer_tools.py",  "test_computer_tools"),
+    (SCRIPT_DIR / "test_produccion.py",      "test_produccion"),
 ]
 
 QT_TEST_ENV = {
