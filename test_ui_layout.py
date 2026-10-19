@@ -596,6 +596,11 @@ class QtDashboardLayoutTests(unittest.TestCase):
         api_key = dialog._fields[("LLM", "api_key")]
         self.assertIsInstance(api_key, QLineEdit)
         self.assertEqual(api_key.echoMode(), QLineEdit.EchoMode.Password)
+        retries = dialog._fields[("LLM", "retries")]
+        self.assertIsInstance(retries, QLineEdit)
+        self.assertEqual(retries.text(), "3")
+        self.assertIsNotNone(dialog._validate("LLM", "retries", "0"))
+        self.assertIsNotNone(dialog._validate("LLM", "retries", "no"))
         self.assertEqual(
             dialog._fields[("LLM", "mode")].toolTip(),
             "Select local or HTTP mode",
@@ -621,6 +626,7 @@ class QtDashboardLayoutTests(unittest.TestCase):
         )
 
         dialog._fields[("UI", "fullscreen")].setCurrentText("false")
+        retries.setText("4")
         theme.setCurrentIndex(theme.findData("ocean"))
         dialog.subtasks_edit.setPlainText(
             "[ANALIZAR]\\nprompt = Analiza la petición\\n\\n[IMPLEMENTAR]\\n"
@@ -630,6 +636,7 @@ class QtDashboardLayoutTests(unittest.TestCase):
             dialog._save()
         saved_config = hercules.Config(str(config_path))
         self.assertEqual(saved_config._parser.get("UI", "theme"), "ocean")
+        self.assertEqual(saved_config.llm_retries, 4)
         self.assertEqual(saved_config._parser.get("UI", "bg_color"), "#081521")
         self.assertEqual(
             subtasks_path.read_text(encoding="utf-8"),

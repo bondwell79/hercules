@@ -194,6 +194,7 @@ class Config:
             "model": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
             "model_path": "modelos",
             "timeout": "120",
+            "retries": "3",
             "n_ctx": "8192",
             "n_threads": "8",
             "n_gpu_layers": "0",
@@ -407,6 +408,11 @@ class Config:
     @property
     def llm_timeout(self) -> float:
         return self._number(float, "LLM", "timeout", "LLM_TIMEOUT", minimum=1)
+
+    @property
+    def llm_retries(self) -> int:
+        """Número de reintentos HTTP adicionales ante timeout o fallo de conexión."""
+        return self._number(int, "LLM", "retries", "LLM_RETRIES", minimum=1)
 
     @property
     def llm_mode(self) -> str:
@@ -965,6 +971,7 @@ LLM_MODEL = CONFIG.llm_model
 LLM_USER_AGENT = CONFIG.llm_user_agent
 LLM_MODEL_PATH = CONFIG.llm_model_path
 LLM_TIMEOUT = CONFIG.llm_timeout
+LLM_RETRIES = CONFIG.llm_retries
 LLM_N_CTX = CONFIG.llm_n_ctx
 LLM_N_THREADS = CONFIG.llm_n_threads
 LLM_N_GPU_LAYERS = CONFIG.llm_n_gpu_layers
@@ -1282,6 +1289,10 @@ class LLMCancelled(LLMError):
 
 class LLMContextOverflow(LLMError):
     """El prompt no cabe en el contexto del modelo."""
+
+
+class _LLMRetryableError(LLMError):
+    """Fallo de timeout o conexión HTTP que permite reintentar la solicitud."""
 
 
 class _HttpAbortHandle:
@@ -1681,6 +1692,7 @@ class LLMConnector:
         n_threads: int = LLM_N_THREADS,
         n_gpu_layers: int = LLM_N_GPU_LAYERS,
         user_agent: str = LLM_USER_AGENT,
+        retries: int = LLM_RETRIES,
     ) -> None:
         self.mode = mode.strip().lower()
         if self.mode not in self._VALID_MODES:
@@ -1693,6 +1705,9 @@ class LLMConnector:
         self.user_agent = user_agent
         self.model_path = model_path
         self.timeout = timeout
+        if retries < 1:
+            raise ValueError("retries debe ser >= 1")
+        self.retries = retries
         self.n_ctx = n_ctx
         self.n_threads = n_threads
         self.n_gpu_layers = n_gpu_layers
@@ -1865,14 +1880,41 @@ class LLMConnector:
             },
         )
 
-        effective_timeout = self.timeout if timeout is None else timeout
         handle = _HttpAbortHandle()
         opener = urllib.request.build_opener(
             _AbortableHTTPHandler(handle), _AbortableHTTPSHandler(handle)
         )
+        request_deadline = (
+            None if timeout is None else time.monotonic() + timeout
+        )
 
         def _perform() -> Dict[str, Any]:
-            return self._perform_http(opener, req, url, effective_timeout, handle)
+            for attempt in range(self.retries + 1):
+                if cancel_event is not None and cancel_event.is_set():
+                    raise LLMCancelled("Petición al LLM cancelada por el usuario")
+                if request_deadline is None:
+                    effective_timeout = self.timeout
+                else:
+                    effective_timeout = request_deadline - time.monotonic()
+                    if effective_timeout <= 0:
+                        raise LLMError(
+                            f"Timeout ({timeout:g}s) esperando respuesta de {url}"
+                        )
+                try:
+                    return self._perform_http(
+                        opener, req, url, effective_timeout, handle
+                    )
+                except _LLMRetryableError as exc:
+                    if attempt >= self.retries:
+                        raise
+                    _LOGGER.warning(
+                        "Fallo HTTP del LLM; reintento %d/%d para %s: %s",
+                        attempt + 1,
+                        self.retries,
+                        url,
+                        exc,
+                    )
+            raise AssertionError("El bucle de reintentos HTTP terminó inesperadamente")
 
         if cancel_event is None:
             return _perform()
@@ -1927,14 +1969,14 @@ class LLMConnector:
             if handle.aborted.is_set():
                 raise LLMCancelled("Petición al LLM cancelada por el usuario") from e
             _log_llm_exchange("ENTRADA ERROR", url, f"{type(e).__name__}: {e}")
-            raise LLMError(
+            raise _LLMRetryableError(
                 f"Timeout ({effective_timeout:g}s) esperando respuesta de {url}"
             ) from e
         except urllib.error.URLError as e:
             if handle.aborted.is_set():
                 raise LLMCancelled("Petición al LLM cancelada por el usuario") from e
             _log_llm_exchange("ENTRADA ERROR", url, f"{type(e).__name__}: {e.reason}")
-            raise LLMError(f"No se pudo conectar con {url}: {e.reason}") from e
+            raise _LLMRetryableError(f"No se pudo conectar con {url}: {e.reason}") from e
         except ValueError as e:
             # JSONDecodeError y UnicodeDecodeError son subclases de ValueError.
             if handle.aborted.is_set():
@@ -1945,7 +1987,7 @@ class LLMConnector:
             if handle.aborted.is_set():
                 raise LLMCancelled("Petición al LLM cancelada por el usuario") from e
             _log_llm_exchange("ENTRADA ERROR", url, f"{type(e).__name__}: {e}")
-            raise LLMError(f"Conexión interrumpida con {url}: {e}") from e
+            raise _LLMRetryableError(f"Conexión interrumpida con {url}: {e}") from e
 
     # --- Dispatcher ---
 

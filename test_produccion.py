@@ -319,10 +319,15 @@ class ConfigTests(unittest.TestCase):
             "command_timeout = nan\nno_authorization = quizas\n"
         )
         self.assertEqual(cfg.llm_timeout, 120.0)
+        self.assertEqual(cfg.llm_retries, 3)
         self.assertEqual(cfg.llm_n_ctx, 8192)
         self.assertEqual(cfg.max_iterations, 10)
         self.assertEqual(cfg.command_timeout, 120.0)
         self.assertFalse(cfg.no_authorization)
+
+    def test_http_retries_below_minimum_fall_back_to_default(self) -> None:
+        cfg = self._config("[LLM]\nretries = 0\n")
+        self.assertEqual(cfg.llm_retries, 3)
 
     def test_invalid_environment_values_do_not_crash(self) -> None:
         cfg = self._config("[LLM]\ntimeout = 33\n")
@@ -418,6 +423,32 @@ class HttpErrorMappingTests(unittest.TestCase):
         )
         with self.assertRaises(ga.LLMContextOverflow):
             llm.chat([{"role": "user", "content": "x"}])
+
+    def test_http_retries_connection_failure_before_success(self) -> None:
+        llm = ga.LLMConnector(mode="http", base_url="http://localhost/v1", retries=2)
+        with patch.object(
+            ga.LLMConnector,
+            "_perform_http",
+            side_effect=[ga._LLMRetryableError("connection reset"), {"ok": True}],
+        ) as perform:
+            result = llm._chat_http(
+                [{"role": "user", "content": "x"}], None, None
+            )
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(perform.call_count, 2)
+
+    def test_http_retries_stop_at_configured_limit(self) -> None:
+        llm = ga.LLMConnector(mode="http", base_url="http://localhost/v1", retries=1)
+        with patch.object(
+            ga.LLMConnector,
+            "_perform_http",
+            side_effect=ga._LLMRetryableError("connection reset"),
+        ) as perform:
+            with self.assertRaises(ga._LLMRetryableError):
+                llm._chat_http(
+                    [{"role": "user", "content": "x"}], None, None
+                )
+        self.assertEqual(perform.call_count, 2)
 
 
 class GuiResponsivenessTests(unittest.TestCase):

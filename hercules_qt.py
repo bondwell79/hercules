@@ -808,6 +808,12 @@ class SettingsDialog(QDialog):
     def _validate(self, section: str, key: str, value: str) -> Optional[str]:
         if "%" in value:
             return "no puede contener '%'"
+        if (section, key) == ("LLM", "retries"):
+            try:
+                if int(value) < 1:
+                    return "debe ser un número entero >= 1"
+            except ValueError:
+                return "debe ser un número entero >= 1"
         default = self.core.Config.DEFAULTS.get(section, {}).get(key)
         if default is None:
             return None
