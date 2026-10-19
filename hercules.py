@@ -203,6 +203,7 @@ class Config:
             "font_size": "10",
         },
         "Agent": {
+            "system_prompt": "Eres un agente autónomo eficiente. Tu objetivo es resolver la tarea del usuario utilizando las herramientas disponibles en el entorno de manera ordenada. Si necesitas actuar, emite tool_calls; si tienes la respuesta final, responde solo con texto.",
             "max_iterations": "10",
             "loop_threshold": "5",
             "context_compact_threshold": "80",
@@ -452,6 +453,11 @@ class Config:
         return os.environ.get("HERCULES_DB", self._parser.get("LLM", "database_path"))
 
     # --- Agent ---
+
+    @property
+    def system_prompt(self) -> str:
+        """Instrucciones de sistema que recibe el agente en cada tarea."""
+        return self._parser.get("Agent", "system_prompt", raw=True)
 
     @property
     def max_iterations(self) -> int:
@@ -3395,41 +3401,7 @@ class LoopDetector:
 # MOTOR DEL AGENTE (ReAct)
 # ============================================================================
 
-SYSTEM_PROMPT = """Eres un agente autónomo con acceso a HERRAMIENTAS (tools/functions).
-
-HERRAMIENTAS DISPONIBLES:
-- read_file(path): Lee el contenido de texto de un archivo del workspace.
-- read_binary_file(path): Lee un archivo binario y devuelve su contenido en Base64 (máximo 50000 bytes).
-- read_binary_hex(path, offset, length): Muestra un rango de un archivo binario como volcado hexadecimal con ASCII.
-- create_file(path, content): Crea un archivo nuevo sin sobrescribir uno existente.
-- edit_file(path, old_text, new_text): Reemplaza una coincidencia exacta; si old_text está vacío, sustituye todo el contenido.
-- search_in_files(query, path, file_pattern): Busca texto literal dentro de archivos.
-- write_file(path, content): Escribe contenido en un archivo del workspace.
-- list_directory(path): Lista el contenido de un directorio del workspace.
-- search_files(pattern, path): Busca archivos por patrón glob.
-- execute_command(command): Ejecuta un comando del sistema dentro del workspace.
-- delete_file(path): Elimina un archivo o directorio del workspace.
-- get_current_time(): Devuelve la fecha y hora UTC actuales.
-- browser_navigate(url): Navega en el navegador integrado (HTTP(S) o archivo local del workspace).
-- browser_snapshot(): Lee URL, título, texto y controles interactivos visibles; asigna referencias únicas como @e1 a cada control.
-- browser_click(ref, selector): Hace clic usando ref de browser_snapshot (preferido) o un selector CSS.
-- browser_fill(ref, text, selector): Rellena por referencia de browser_snapshot (preferido) o selector CSS.
-  Las referencias son temporales y caducan al navegar, desplazar, interactuar o pedir otro snapshot; solicita uno nuevo si una referencia no se encuentra.
-- browser_scroll(direction, amount): Desplaza la página hacia arriba o abajo; amount es una distancia opcional en píxeles (600 por defecto).
-- browser_press_key(key): Pulsación de tecla en la página web. Si la tecla no es reconocida por el navegador responderá con un aviso.
-- browser_screenshot(path): Captura el navegador y adjunta la imagen para analizarla.
-- browser_back(), browser_forward(), browser_reload(): Controlan el historial y recarga.
-
-PRIORIDADES:
-1. Si la tarea a realizar requiere acceder a internet, primero usa comandos browser antes de ejecutar comandos.
-2. Si la tarea requiere utilizar un programa del sistema que tiene entorno gráfico intenta usar primero los comandos take_screenshot, mouse_click, mouse_move, keyboard_type_text y keyboard_press_keys antes de ejecutar comandos del sistema.
-3. Si la tarea requiere manipular archivos, primero intenta usar los comandos read_file, read_binary_file, read_binary_hex, create_file, edit_file, search_in_files, write_file, list_directory y search_files antes de ejecutar comandos del sistema.
-4. Si no consigues realizar la tarea usando las herramientas indicadas en los puntos 1, 2 y 3, entonces puedes usar execute_command para ejecutar un comando del sistema.
-
-FORMATO DE RESPUESTA:
-- Si necesitas actuar: emite una o más tool_calls.
-- Si ya tienes la respuesta final: responde solo con texto, sin tool_calls.
-"""
+SYSTEM_PROMPT = CONFIG.system_prompt
 
 
 _CHARS_PER_TOKEN = 3
@@ -4768,27 +4740,50 @@ def _update_config_file(path: str, updates: Dict[str, Dict[str, str]]) -> None:
             idx -= 1
         if idx > 0 and not out[idx - 1].endswith("\n"):
             out[idx - 1] += "\n"
-        out[idx:idx] = [f"{k} = {v}\n" for k, v in missing.items()]
+        out[idx:idx] = [
+            rendered_line
+            for key, value in missing.items()
+            for rendered_line in _format_config_value(key, value)
+        ]
         remaining[sec or ""] = {}
 
+    def _format_config_value(key: str, value: str) -> List[str]:
+        value_lines = value.splitlines() or [""]
+        return [f"{key} = {value_lines[0]}\n"] + [
+            f"    {value_line}\n" for value_line in value_lines[1:]
+        ]
+
     section: Optional[str] = None
+    skip_continuations = False
     for line in lines:
         body = line.rstrip("\r\n")
         newline = line[len(body):]
+        stripped = body.strip()
+        if skip_continuations:
+            if not stripped:
+                out.append(line)
+                continue
+            if body[:1].isspace() and stripped[0] not in ";#":
+                continue
+            skip_continuations = False
         m = _CONFIG_SECTION_RE.match(body)
         if m:
             flush(section)
             section = m.group("name").strip()
             out.append(line)
             continue
-        stripped = body.strip()
         if section is not None and stripped and stripped[0] not in ";#":
             km = _CONFIG_KEY_RE.match(stripped)
             if km:
                 key = km.group("key").strip()
                 sec_updates = remaining.get(section, {})
                 if key.lower() in sec_updates:
-                    out.append(f"{key} = {sec_updates.pop(key.lower())}{newline or chr(10)}")
+                    value = sec_updates.pop(key.lower())
+                    rendered = _format_config_value(key, value)
+                    if newline and rendered:
+                        rendered[0] = rendered[0].rstrip("\r\n") + newline
+                    out.extend(rendered)
+                    skip_continuations = True
                     continue
         out.append(line)
     flush(section)
@@ -4797,7 +4792,8 @@ def _update_config_file(path: str, updates: Dict[str, Dict[str, str]]) -> None:
             if out and out[-1].strip():
                 out.append("\n")
             out.append(f"[{sec}]\n")
-            out.extend(f"{k} = {v}\n" for k, v in kv.items())
+            for key, value in kv.items():
+                out.extend(_format_config_value(key, value))
 
     tmp_path = f"{path}.tmp"
     with open(tmp_path, "w", encoding="utf-8", newline="") as fh:

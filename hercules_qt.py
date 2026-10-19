@@ -699,6 +699,7 @@ class SettingsDialog(QDialog):
 
         setting_labels = {
             ("LLM", "database_path"): "Base de datos",
+            ("Agent", "system_prompt"): "Prompt del sistema",
             ("UI", "theme"): "Tema",
             ("UI", "fullscreen"): "Iniciar en pantalla completa",
             ("UI", "font_family"): "Tipografía",
@@ -734,6 +735,14 @@ class SettingsDialog(QDialog):
                 field.setCurrentIndex(current_index)
             elif field_key != ("UI", "theme"):
                 field.setCurrentText(value)
+        elif field_key == ("Agent", "system_prompt"):
+            field = QPlainTextEdit()
+            field.setPlainText(value)
+            field.setMinimumHeight(150)
+            field.setTabStopDistance(
+                4 * field.fontMetrics().horizontalAdvance(" ")
+            )
+            field.setPlaceholderText("Instrucciones que seguirá el agente")
         else:
             field = QLineEdit(value)
             if key == "api_key":
@@ -803,10 +812,12 @@ class SettingsDialog(QDialog):
             return field.currentText().strip()
         if isinstance(field, QLineEdit):
             return field.text().strip()
+        if isinstance(field, QPlainTextEdit):
+            return field.toPlainText()
         raise TypeError(f"Unsupported settings field: {type(field).__name__}")
 
     def _validate(self, section: str, key: str, value: str) -> Optional[str]:
-        if "%" in value:
+        if (section, key) != ("Agent", "system_prompt") and "%" in value:
             return "no puede contener '%'"
         if (section, key) == ("LLM", "retries"):
             try:

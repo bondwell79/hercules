@@ -530,6 +530,10 @@ class QtDashboardLayoutTests(unittest.TestCase):
             "[LLM]\n"
             "; Select local or HTTP mode\n"
             "mode = http\n\n"
+            "[Agent]\n"
+            "; Existing system instructions\n"
+            "system_prompt = Instrucción anterior\n"
+            "    continuación anterior\n\n"
             "[UI]\n"
             "; Start maximized\n"
             "fullscreen = true\n",
@@ -555,6 +559,8 @@ class QtDashboardLayoutTests(unittest.TestCase):
         self.assertNotIn("Database", dialog.SECTION_TITLES)
         self.assertNotIn("Database", [dialog.tabs.tabText(i) for i in range(dialog.tabs.count())])
         self.assertIsInstance(dialog._fields[("Agent", "workspace_path")], QLineEdit)
+        system_prompt = dialog._fields[("Agent", "system_prompt")]
+        self.assertIsInstance(system_prompt, QPlainTextEdit)
         self.assertIsInstance(dialog._fields[("LLM", "database_path")], QLineEdit)
         self.assertEqual(dialog._fields[("LLM", "database_path")].text(), "hercules.db")
         self.assertEqual(
@@ -626,6 +632,10 @@ class QtDashboardLayoutTests(unittest.TestCase):
         )
 
         dialog._fields[("UI", "fullscreen")].setCurrentText("false")
+        system_prompt.setPlainText(
+            "Sigue estas instrucciones:\n\n"
+            "Responde en español y conserva el 100% del contenido."
+        )
         retries.setText("4")
         theme.setCurrentIndex(theme.findData("ocean"))
         dialog.subtasks_edit.setPlainText(
@@ -635,6 +645,11 @@ class QtDashboardLayoutTests(unittest.TestCase):
         with patch("hercules_qt.QMessageBox.information"):
             dialog._save()
         saved_config = hercules.Config(str(config_path))
+        self.assertEqual(
+            saved_config.system_prompt,
+            "Sigue estas instrucciones:\n\n"
+            "Responde en español y conserva el 100% del contenido.",
+        )
         self.assertEqual(saved_config._parser.get("UI", "theme"), "ocean")
         self.assertEqual(saved_config.llm_retries, 4)
         self.assertEqual(saved_config._parser.get("UI", "bg_color"), "#081521")
@@ -648,6 +663,7 @@ class QtDashboardLayoutTests(unittest.TestCase):
         self.assertIn("fullscreen = false", saved)
         self.assertIn("; Select local or HTTP mode", saved)
         self.assertIn("mode = http", saved)
+        self.assertNotIn("continuación anterior", saved)
 
     def test_configuration_sections_are_not_migrated(self):
         config_path = Path(self.workspace_dir.name) / "old-config.ini"
