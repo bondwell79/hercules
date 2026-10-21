@@ -17,9 +17,9 @@ from urllib.parse import urlparse
 from PySide6.QtCore import QEvent, QObject, QTimer, QUrl, Qt, Signal, Slot
 from PySide6.QtGui import (
     QAction,
+    QDesktopServices,
     QColor,
     QConicalGradient,
-    QDesktopServices,
     QFont,
     QFontDatabase,
     QKeyEvent,
@@ -38,7 +38,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFileSystemModel,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -52,7 +51,6 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSplitter,
     QTabWidget,
-    QTreeView,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -990,7 +988,6 @@ class QtDashboard(QMainWindow):
         self._approval_queue: deque[Dict[str, Any]] = deque()
         self._approval_dialog_open = False
         self._preauthorized_requests: set[str] = set()
-        self._browser_current_dir = self.workspace
         self._tree_signatures: Dict[int, Any] = {}
         self._history_last_id = 0
 
@@ -998,7 +995,7 @@ class QtDashboard(QMainWindow):
         self._configure_window()
         self._build_layout()
         self._setup_browser()
-        self._refresh_file_browser()
+        self._show_workspace_in_browser()
         self._refresh_task_lists()
         self._select_task(None)
 
@@ -1097,7 +1094,7 @@ class QtDashboard(QMainWindow):
             QMainWindow, QWidget {{ background: {self.config.ui_frame_bg}; color: {self.config.ui_fg_color}; }}
             QGroupBox {{ background: {self.config.ui_card_bg}; border: 1px solid {self.config.ui_card_border_color}; border-radius: 6px; margin-top: 10px; padding: 8px; }}
             QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 4px; }}
-            QPlainTextEdit, QLineEdit, QTreeView, QTreeWidget, QTabWidget::pane {{
+            QPlainTextEdit, QLineEdit, QTreeWidget, QTabWidget::pane {{
                 background: {self.config.ui_prompt_bg}; color: {self.config.ui_prompt_fg};
                 border: 1px solid {self.config.ui_card_border_color}; border-radius: 4px;
                 selection-background-color: {self.config.ui_browser_selected_bg};
@@ -1125,7 +1122,6 @@ class QtDashboard(QMainWindow):
         workspace_action = QAction("Abrir workspace en el explorador", self)
         workspace_action.triggered.connect(self._open_workspace)
         menu.addAction(workspace_action)
-
         columns = QSplitter(Qt.Orientation.Horizontal, self)
         columns.setChildrenCollapsible(False)
         self.setCentralWidget(columns)
@@ -1213,39 +1209,8 @@ class QtDashboard(QMainWindow):
         layout.addWidget(self.history_view, 1)
         parent.addWidget(panel)
 
-    def _build_explorer_panel(self, parent: QTabWidget) -> None:
-        panel = QWidget(parent)
-        layout = QVBoxLayout(panel)
-        toolbar = QHBoxLayout()
-        self.path_label = QLabel(str(self.workspace), panel)
-        self.path_label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
-        toolbar.addWidget(self.path_label, 1)
-        up_button = QPushButton("↑", panel)
-        up_button.setToolTip("Subir al directorio padre")
-        up_button.clicked.connect(self._go_parent_directory)
-        toolbar.addWidget(up_button)
-        refresh_button = QPushButton("↻", panel)
-        refresh_button.setToolTip("Actualizar")
-        refresh_button.clicked.connect(self._refresh_file_browser)
-        toolbar.addWidget(refresh_button)
-        layout.addLayout(toolbar)
-
-        self.file_model = QFileSystemModel(panel)
-        self.file_model.setRootPath(str(self.workspace))
-        self.file_tree = QTreeView(panel)
-        self.file_tree.setModel(self.file_model)
-        self.file_tree.setRootIndex(self.file_model.index(str(self.workspace)))
-        self.file_tree.setColumnWidth(0, 280)
-        self.file_tree.setColumnHidden(2, True)
-        self.file_tree.setColumnHidden(3, True)
-        self.file_tree.doubleClicked.connect(self._open_file_from_tree)
-        layout.addWidget(self.file_tree, 1)
-        parent.addTab(panel, "Explorador")
-
     def _build_workspace_tools_panel(self, parent: QWidget) -> None:
-        panel = QGroupBox("Terminal, navegador y explorador", parent)
+        panel = QGroupBox("Terminal y navegador", parent)
         layout = QVBoxLayout(panel)
 
         self.workspace_tabs = QTabWidget(panel)
@@ -1296,7 +1261,6 @@ class QtDashboard(QMainWindow):
         self.web_view = QWebEngineView(browser_page)
         browser_layout.addWidget(self.web_view, 1)
         self.workspace_tabs.addTab(browser_page, "Navegador web")
-        self._build_explorer_panel(self.workspace_tabs)
         layout.addWidget(self.workspace_tabs, 1)
         parent.addWidget(panel)
 
@@ -1630,15 +1594,22 @@ class QtDashboard(QMainWindow):
     def _abort_task(self) -> None:
         if self._active_task_cancel_event is not None:
             self._active_task_cancel_event.set()
+            self._show_workspace_in_browser()
             self.abort_button.setEnabled(False)
             self.statusBar().showMessage("Cancelación solicitada…")
 
     def _finish_task_thread(self) -> None:
+        was_aborted = (
+            self._active_task_cancel_event is not None
+            and self._active_task_cancel_event.is_set()
+        )
         self._active_task_cancel_event = None
         self._active_task_thread = None
         self.execute_button.setEnabled(True)
         self.abort_button.setEnabled(False)
         self.context_bar.set_generating(False)
+        if was_aborted:
+            self._show_workspace_in_browser()
         self._refresh_task_lists()
 
     def _delete_finished_tasks(self) -> None:
@@ -1675,7 +1646,7 @@ class QtDashboard(QMainWindow):
 
         - Presupuesto de tiempo por tick: una ráfaga de eventos no congela la
           ventana; el resto se atiende en el siguiente tick.
-        - Los eventos repetidos de refresco (historial, estado, explorador) se
+        - Los eventos repetidos de refresco (historial y estado) se
           agrupan: basta un refresco por tick.
         - Un fallo al tratar un evento se registra y no impide procesar los
           demás ni mata el temporizador.
@@ -1683,7 +1654,6 @@ class QtDashboard(QMainWindow):
         deadline = time.monotonic() + self.POLL_BUDGET_SECONDS
         refresh_history_for: set[int] = set()
         refresh_tasks = False
-        refresh_files = False
         while time.monotonic() < deadline:
             try:
                 event = self.ui_queue.get_nowait()
@@ -1698,9 +1668,6 @@ class QtDashboard(QMainWindow):
             if event_type == "status_change":
                 refresh_tasks = True
                 continue
-            if event_type == "refresh_file_browser":
-                refresh_files = True
-                continue
             self._safe_handle_event(event)
         if refresh_tasks:
             self._safe_handle_event({"type": "status_change"})
@@ -1710,9 +1677,6 @@ class QtDashboard(QMainWindow):
                     self._refresh_history_incremental(task_id)
             except Exception:  # noqa: BLE001
                 logging.getLogger("hercules").exception("Error actualizando el historial")
-        if refresh_files:
-            self._safe_handle_event({"type": "refresh_file_browser"})
-
     def _safe_handle_event(self, event: Dict[str, Any]) -> None:
         try:
             self._handle_event(event)
@@ -1752,8 +1716,6 @@ class QtDashboard(QMainWindow):
             self._show_approval(event)
         elif event_type == "preauth_result":
             self._finish_preauthorization(event)
-        elif event_type == "refresh_file_browser":
-            self._refresh_file_browser()
         elif event_type == "show_file":
             self._show_changed_file(str(event.get("path", "")))
         elif event_type == "terminal_command":
@@ -1894,41 +1856,6 @@ class QtDashboard(QMainWindow):
         self._approval_dialog_open = False
         QTimer.singleShot(0, self._show_next_approval)
 
-    def _refresh_file_browser(self) -> None:
-        if not _is_within_workspace(self._browser_current_dir, self.workspace):
-            self._browser_current_dir = self.workspace
-        if not self._browser_current_dir.is_dir():
-            self._browser_current_dir = self.workspace
-        self.file_model.setRootPath(str(self.workspace))
-        self.file_tree.setRootIndex(
-            self.file_model.index(str(self._browser_current_dir))
-        )
-        self.path_label.setText(str(self._browser_current_dir))
-
-    def _go_parent_directory(self) -> None:
-        current = self._browser_current_dir.resolve()
-        if current == self.workspace or not _is_within_workspace(current.parent, self.workspace):
-            return
-        self._browser_current_dir = current.parent
-        self._refresh_file_browser()
-
-    def _open_file_from_tree(self, index: Any) -> None:
-        if not index.isValid():
-            return
-        path = Path(self.file_model.filePath(index)).resolve()
-        if not _is_within_workspace(path, self.workspace):
-            QMessageBox.warning(
-                self,
-                "Ruta fuera del workspace",
-                "Solo se pueden abrir documentos del workspace.",
-            )
-            return
-        if path.is_dir():
-            self._browser_current_dir = path
-            self._refresh_file_browser()
-            return
-        self._load_local_document(path)
-
     def _show_changed_file(self, raw_path: str) -> None:
         if not raw_path:
             return
@@ -1947,13 +1874,11 @@ class QtDashboard(QMainWindow):
         else:
             self.web_view.setUrl(url)
 
-    def _load_local_document(self, path: Path) -> None:
-        if not path.is_file():
-            return
+    def _show_workspace_in_browser(self) -> None:
         browser_index = self.workspace_tabs.indexOf(self.web_view.parentWidget())
         if browser_index >= 0:
             self.workspace_tabs.setCurrentIndex(browser_index)
-        self.web_view.setUrl(QUrl.fromLocalFile(str(path)))
+        self.web_view.setUrl(QUrl.fromLocalFile(str(self.workspace)))
 
     def _navigate_to_address(self) -> None:
         address = self.address_bar.text().strip()

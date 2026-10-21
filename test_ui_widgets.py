@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QPlainTextEdit,
     QPushButton,
-    QTreeView,
     QTreeWidget,
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -75,7 +74,7 @@ class DashboardWidgetTests(TestCase):
         self.assertIsInstance(self.window.execute_button, QPushButton)
         self.assertIsInstance(self.window.abort_button, QPushButton)
         self.assertIsInstance(self.window.active_tasks, QTreeWidget)
-        self.assertIsInstance(self.window.file_tree, QTreeView)
+        self.assertFalse(hasattr(self.window, "file_tree"))
         self.assertIsInstance(self.window.web_view, QWebEngineView)
         self.assertEqual(self.window.windowTitle(), f"Hercules {hercules.VERSION}")
 

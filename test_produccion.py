@@ -518,7 +518,6 @@ class GuiResponsivenessTests(unittest.TestCase):
 
     def test_failing_event_does_not_block_following_events(self) -> None:
         self.window.ui_queue.put({"type": "approval_request"})
-        self.window.ui_queue.put({"type": "refresh_file_browser"})
         self.window.ui_queue.put({"type": "context_usage", "task_id": 7, "tokens_used": 1, "max_tokens": 2, "percent": 50})
         self.window._poll_queue()
         self.assertEqual(self.window._context_usage[7]["percent"], 50)

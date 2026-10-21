@@ -89,14 +89,17 @@ class QtDashboardLayoutTests(unittest.TestCase):
                 "Historial de tarea",
             ],
         )
-        self.assertEqual(right.title(), "Terminal, navegador y explorador")
+        self.assertEqual(right.title(), "Terminal y navegador")
         self.assertIsInstance(self.window.workspace_tabs, QTabWidget)
         self.assertEqual(
             [
                 self.window.workspace_tabs.tabText(i)
                 for i in range(self.window.workspace_tabs.count())
             ],
-            ["Terminal de sistema", "Navegador web", "Explorador"],
+            ["Terminal de sistema", "Navegador web"],
+        )
+        self.assertEqual(
+            self.window.web_view.url(), QUrl.fromLocalFile(str(self.window.workspace))
         )
         self.assertIsInstance(self.window.terminal_view, QPlainTextEdit)
         self.assertTrue(self.window.terminal_view.isReadOnly())
@@ -362,38 +365,30 @@ class QtDashboardLayoutTests(unittest.TestCase):
             f"{terminal_path}> echo prueba\nsalida del comando\n",
         )
 
-    def test_double_clicking_explorer_file_shows_browser_tab(self):
-        target = self.window.workspace / "opened.txt"
-        target.write_text("contenido", encoding="utf-8")
-        self.window.workspace_tabs.setCurrentIndex(0)
-        index = self.window.file_model.index(str(target))
-
-        self.window._open_file_from_tree(index)
-
-        browser_index = self.window.workspace_tabs.indexOf(
-            self.window.web_view.parentWidget()
-        )
-        self.assertEqual(self.window.workspace_tabs.currentIndex(), browser_index)
-        self.assertEqual(
-            self.window.web_view.url(), QUrl.fromLocalFile(str(target.resolve()))
-        )
-
-    def test_written_file_is_shown_in_browser_tab(self):
+    def test_aborting_task_returns_browser_to_workspace_url(self):
         target = self.window.workspace / "salida.txt"
         target.write_text("hola", encoding="utf-8")
+        cancel_event = threading.Event()
+        self.window._active_task_cancel_event = cancel_event
+        self.window.web_view.setUrl(QUrl.fromLocalFile(str(target)))
         self.window.workspace_tabs.setCurrentIndex(0)
 
-        self.window.ui_queue.put(
-            {"type": "show_file", "task_id": 1, "path": "salida.txt"}
+        self.window._abort_task()
+        self.assertTrue(cancel_event.is_set())
+        self.assertEqual(
+            self.window.web_view.url(), QUrl.fromLocalFile(str(self.window.workspace))
         )
-        self.window._poll_queue()
+
+        target_url = QUrl.fromLocalFile(str(target))
+        self.window.web_view.setUrl(target_url)
+        self.window._finish_task_thread()
 
         browser_index = self.window.workspace_tabs.indexOf(
             self.window.web_view.parentWidget()
         )
         self.assertEqual(self.window.workspace_tabs.currentIndex(), browser_index)
         self.assertEqual(
-            self.window.web_view.url(), QUrl.fromLocalFile(str(target.resolve()))
+            self.window.web_view.url(), QUrl.fromLocalFile(str(self.window.workspace))
         )
 
     def test_history_entries_keep_configured_event_colors(self):

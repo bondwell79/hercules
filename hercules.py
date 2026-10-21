@@ -1982,6 +1982,10 @@ class LLMConnector:
             if handle.aborted.is_set():
                 raise LLMCancelled("Petición al LLM cancelada por el usuario") from e
             _log_llm_exchange("ENTRADA ERROR", url, f"{type(e).__name__}: {e.reason}")
+            if isinstance(e.reason, TimeoutError):
+                raise _LLMRetryableError(
+                    f"Timeout ({effective_timeout:g}s) esperando respuesta de {url}"
+                ) from e
             raise _LLMRetryableError(f"No se pudo conectar con {url}: {e.reason}") from e
         except ValueError as e:
             # JSONDecodeError y UnicodeDecodeError son subclases de ValueError.
@@ -4081,9 +4085,6 @@ class Agent:
                     )
                     if result.image_data:
                         image_messages.append(_image_message(result.image_data))
-                    if tc.name in {"create_file", "edit_file", "write_file", "execute_command", "delete_file"} and result.success:
-                        # refrescamos explorador de ficheros
-                        self.ui_queue.put({"type": "refresh_file_browser", "task_id": task_id})
                     if tc.name in {"create_file", "edit_file", "write_file"} and result.success:
                         self.ui_queue.put(
                             {
