@@ -1975,6 +1975,9 @@ class QtDashboard(QMainWindow):
     def closeEvent(self, event: Any) -> None:
         if self._active_task_cancel_event is not None:
             self._active_task_cancel_event.set()
+        # Las tareas paralelas son hilos daemon: se cancelan y se espera un
+        # momento para que dejen su estado final en la BD antes de salir.
+        self.agent.parallel.cancel_all()
         for request_id in list(self._preauthorized_requests):
             self.permissions.resolve(
                 request_id,
@@ -1988,6 +1991,7 @@ class QtDashboard(QMainWindow):
                 False,
                 reason="aplicación cerrada antes de la aprobación",
             )
+        self.agent.parallel.wait_all(5.0)
         super().closeEvent(event)
 
 

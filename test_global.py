@@ -16,6 +16,7 @@ Suites ejecutadas (en este orden):
     8. test_welcome_dialog.py    — diálogo Qt de bienvenida durante el arranque.
     9. test_computer_tools.py    — herramientas autorizadas de captura y ratón.
    10. test_produccion.py        — robustez: cancelación, contexto, config, BD, GUI.
+   11. test_parallel_tasks.py    — herramienta spawn_parallel_task (tareas paralelas).
 
 Cada suite se lanza como subproceso independiente para mantener el
 aislamiento entre ellas (cada una crea y destruye su propio entorno
@@ -62,6 +63,7 @@ SUITES: List[tuple] = [
     (SCRIPT_DIR / "test_welcome_dialog.py",  "test_welcome_dialog"),
     (SCRIPT_DIR / "test_computer_tools.py",  "test_computer_tools"),
     (SCRIPT_DIR / "test_produccion.py",      "test_produccion"),
+    (SCRIPT_DIR / "test_parallel_tasks.py",  "test_parallel_tasks"),
 ]
 
 QT_TEST_ENV = {

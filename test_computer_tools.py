@@ -55,6 +55,8 @@ class ToolTests(unittest.TestCase):
             "search_in_files": hercules.RiskLevel.SAFE,
             "execute_command": hercules.RiskLevel.CRITICAL,
             "delete_file": hercules.RiskLevel.SAFE,
+            "spawn_parallel_task": hercules.RiskLevel.SAFE,
+            "wait_parallel_task": hercules.RiskLevel.SAFE,
             "browser_navigate": hercules.RiskLevel.SAFE,
             "browser_snapshot": hercules.RiskLevel.SAFE,
             "browser_click": hercules.RiskLevel.SAFE,

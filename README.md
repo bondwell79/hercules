@@ -40,7 +40,8 @@ edit_file	        SAFE	Reemplaza una coincidencia de texto en un archivo; tambi�
 search_in_files	    SAFE	Busca una cadena literal dentro de archivos del workspace.
 execute_command	    CRITICAL	Ejecuta un comando del sistema desde el workspace; requiere aprobación y aplica comprobaciones de seguridad.
 delete_file	        SAFE	Elimina un archivo o directorio del workspace.
-
+spawn_parallel_task	SAFE	Lanza en segundo plano una tarea paralela a partir de un `prompt` escrito por el modelo; el padre espera a que terminen todas antes de su respuesta final. Máximo simultáneo: `max_parallel_tasks` (`[Agent]`, por defecto 3); espera máxima: `parallel_task_timeout` (por defecto 1800 s).
+wait_parallel_task	SAFE	Espera a una tarea paralela concreta (`task_id`, `timeout` opcional) y devuelve su resultado sin esperar al final de la tarea.
 - 🛡️ **Human-in-the-Loop (HITL):** las herramientas `write_file`, `create_file`, `edit_file` y `delete_file` están limitadas al workspace y se clasifican como SAFE; las acciones CRITICAL, como ejecutar comandos, requieren aprobación manual mediante popups modales. Incluye preautorización opcional por el LLM y análisis de seguridad de comandos.
 - 🔌 **Modo dual LLM:** local (GGUF con `llama-cpp-python`) o HTTP (OpenAI/Ollama/llama.cpp server).
 

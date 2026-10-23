@@ -53,7 +53,9 @@ from enum import Enum
 from pathlib import Path
 
 
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tuple
+
+import concurrent.futures
 
 import computer_tools
 
@@ -206,6 +208,8 @@ class Config:
             "system_prompt": "Eres un agente autónomo eficiente. Tu objetivo es resolver la tarea del usuario utilizando las herramientas disponibles en el entorno de manera ordenada. Si necesitas actuar, emite tool_calls; si tienes la respuesta final, responde solo con texto.",
             "max_iterations": "10",
             "loop_threshold": "5",
+            "max_parallel_tasks": "3",
+            "parallel_task_timeout": "1800",
             "context_compact_threshold": "80",
             "preauth_timeout": "15",
             "preauth_fallback_to_human": "true",
@@ -466,6 +470,20 @@ class Config:
     @property
     def loop_threshold(self) -> int:
         return self._number(int, "Agent", "loop_threshold", "HERCULES_LOOP_THRESHOLD", minimum=1)
+
+    @property
+    def max_parallel_tasks(self) -> int:
+        """Número máximo de tareas paralelas ejecutándose a la vez."""
+        return self._number(
+            int, "Agent", "max_parallel_tasks", "HERCULES_MAX_PARALLEL_TASKS", minimum=1
+        )
+
+    @property
+    def parallel_task_timeout(self) -> float:
+        """Segundos máximos que el padre espera a sus tareas paralelas (0 = sin límite)."""
+        return self._number(
+            float, "Agent", "parallel_task_timeout", "HERCULES_PARALLEL_TASK_TIMEOUT", minimum=0
+        )
 
     @property
     def log_max_bytes(self) -> int:
@@ -2833,6 +2851,24 @@ def tool_delete_file(args: Dict[str, Any]) -> str:
     return f"OK: eliminado {path}"
 
 
+SPAWN_PARALLEL_TOOL = "spawn_parallel_task"
+WAIT_PARALLEL_TOOL = "wait_parallel_task"
+PARALLEL_TOOLS = (SPAWN_PARALLEL_TOOL, WAIT_PARALLEL_TOOL)
+# Herramientas que modifican ficheros y deben respetar la propiedad entre tareas.
+_FILE_MUTATING_TOOLS = frozenset({"write_file", "create_file", "edit_file", "delete_file"})
+PARALLEL_NAME_PREFIX = "PARALELA-"
+
+
+def tool_spawn_parallel_task(args: Dict[str, Any]) -> str:
+    """Marcador: la ejecución real la resuelve ``Agent`` (necesita la tarea padre)."""
+    return "ERROR: spawn_parallel_task solo puede ejecutarse desde el bucle del agente."
+
+
+def tool_wait_parallel_task(args: Dict[str, Any]) -> str:
+    """Marcador: la ejecución real la resuelve ``Agent`` (necesita la tarea padre)."""
+    return "ERROR: wait_parallel_task solo puede ejecutarse desde el bucle del agente."
+
+
 class ToolsRegistry:
     """Registro central de herramientas disponibles para el agente."""
 
@@ -3218,6 +3254,71 @@ class ToolsRegistry:
                 runner=tool_delete_file,
             )
         )
+        self.register(
+            ToolDefinition(
+                name=SPAWN_PARALLEL_TOOL,
+                description=(
+                    "Lanza una tarea en paralelo que otro agente ejecuta en segundo "
+                    "plano con sus propias herramientas, sin bloquearte: devuelve su "
+                    "id al instante y puedes seguir trabajando. Úsala para trabajo "
+                    "independiente que pueda avanzar a la vez que el tuyo. "
+                    "La tarea paralela NO ve tu conversación: el prompt debe ser "
+                    "autocontenido (objetivo, datos necesarios y resultado esperado). "
+                    "Para no pisar los ficheros de otras tareas, indica en el prompt "
+                    "que trabaje en una subcarpeta propia del workspace (por ejemplo "
+                    "'tarea_1/') y que solo cree y modifique ficheros dentro de ella. "
+                    "Las tareas paralelas no pueden lanzar a su vez más tareas. "
+                    "Si dos tareas intentan modificar el mismo fichero, la segunda "
+                    "recibe un aviso y no se escribe. Si necesitas el resultado antes "
+                    "de terminar usa wait_parallel_task; en cualquier caso, antes de "
+                    "tu respuesta final se esperará a que terminen todas y sus "
+                    "resultados se añadirán a ella. Argumentos: prompt."
+                ),
+                risk=RiskLevel.SAFE,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "prompt": {
+                            "type": "string",
+                            "description": (
+                                "Instrucciones completas y autocontenidas para la "
+                                "tarea paralela."
+                            ),
+                        }
+                    },
+                    "required": ["prompt"],
+                },
+                runner=tool_spawn_parallel_task,
+            )
+        )
+        self.register(
+            ToolDefinition(
+                name=WAIT_PARALLEL_TOOL,
+                description=(
+                    "Espera a que termine una tarea paralela que lanzaste con "
+                    "spawn_parallel_task y devuelve su resultado, para poder usarlo "
+                    "antes de tu respuesta final. Si no termina en 'timeout' segundos "
+                    "devuelve su estado actual sin cancelarla. "
+                    "Argumentos: task_id, timeout (opcional, segundos)."
+                ),
+                risk=RiskLevel.SAFE,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "task_id": {
+                            "type": "integer",
+                            "description": "Id devuelto por spawn_parallel_task.",
+                        },
+                        "timeout": {
+                            "type": "number",
+                            "description": "Segundos máximos de espera (opcional).",
+                        },
+                    },
+                    "required": ["task_id"],
+                },
+                runner=tool_wait_parallel_task,
+            )
+        )
 
     def register(self, tool: ToolDefinition) -> None:
         self._tools[tool.name] = tool
@@ -3228,10 +3329,13 @@ class ToolsRegistry:
     def all(self) -> List[ToolDefinition]:
         return list(self._tools.values())
 
-    def to_openai_tools(self) -> List[Dict[str, Any]]:
+    def to_openai_tools(self, exclude: Iterable[str] = ()) -> List[Dict[str, Any]]:
         """Convierte el registro al formato OpenAI/Ollama de tools."""
+        excluded = set(exclude)
         out: List[Dict[str, Any]] = []
         for t in self.all():
+            if t.name in excluded:
+                continue
             out.append(
                 {
                     "type": "function",
@@ -3415,6 +3519,295 @@ _TOOL_OUTPUT_CONTEXT_SHARE = 0.25
 _COMPACTION_MARKER = "CONTEXTO COMPACTADO:"
 
 
+@dataclass
+class _ParallelRun:
+    """Estado de una tarea paralela lanzada por el modelo."""
+    task: Task
+    cancel: threading.Event
+    done: threading.Event
+
+
+class ParallelTaskManager:
+    """
+    Ejecuta en hilos las tareas que el modelo lanza con ``spawn_parallel_task``.
+
+    Cada tarea paralela es una ``Task`` hija (en la BD cuelga de la tarea raíz
+    para que el dashboard la muestre) con su propio bucle de agente. Como
+    máximo ``max_parallel`` se ejecutan a la vez; el resto espera en PENDING.
+    """
+
+    POLL_SECONDS = 0.2
+    # Margen para que las hijas cancelen por timeout y dejen su estado final.
+    CANCEL_GRACE_SECONDS = 10.0
+
+    def __init__(
+        self,
+        agent: "Agent",
+        max_parallel: Optional[int] = None,
+        wait_timeout: Optional[float] = None,
+    ) -> None:
+        self._agent = agent
+        self.max_parallel = max(1, int(max_parallel or CONFIG.max_parallel_tasks))
+        # 0 (o negativo) significa esperar sin límite.
+        timeout = CONFIG.parallel_task_timeout if wait_timeout is None else wait_timeout
+        self.wait_timeout: Optional[float] = timeout if timeout and timeout > 0 else None
+        self._slots = threading.BoundedSemaphore(self.max_parallel)
+        self._lock = threading.Lock()
+        self._runs: Dict[int, List[_ParallelRun]] = {}
+        # Ejecuciones con hilo vivo (aunque ``release`` ya las haya olvidado).
+        self._active: List[_ParallelRun] = []
+        # Ficheros modificados por tareas vivas mientras hay tareas paralelas.
+        self._file_owners: Dict[Path, int] = {}
+
+    def is_parallel_task(self, task_id: int) -> bool:
+        """Una tarea es paralela si su registro en la BD lleva el prefijo reservado."""
+        task = self._agent.db.get_task(task_id)
+        return task is not None and (task.subtask_name or "").startswith(PARALLEL_NAME_PREFIX)
+
+    def claim_file(self, task_id: int, path: Path) -> Optional[int]:
+        """
+        Reserva ``path`` para ``task_id`` mientras haya tareas paralelas activas.
+
+        Devuelve el id de la tarea que lo tiene reservado si hay conflicto
+        (mismo fichero, o un directorio que contiene al otro); si no, ``None``.
+        """
+        with self._lock:
+            for owned, owner in self._file_owners.items():
+                if owner != task_id and (
+                    owned == path or owned in path.parents or path in owned.parents
+                ):
+                    return owner
+            if self._active:
+                self._file_owners[path] = task_id
+        return None
+
+    def _drop_claims(self, task_id: int) -> None:
+        with self._lock:
+            for path in [p for p, owner in self._file_owners.items() if owner == task_id]:
+                del self._file_owners[path]
+
+    def _root_id(self, task_id: int) -> int:
+        current = task_id
+        for _ in range(32):
+            task = self._agent.db.get_task(current)
+            if task is None or task.parent_task_id is None:
+                return current
+            current = task.parent_task_id
+        return current
+
+    def spawn(
+        self,
+        spawner_id: int,
+        prompt: str,
+        parent_cancel: Optional[threading.Event] = None,
+    ) -> Task:
+        """Crea la tarea hija y la lanza en segundo plano sin bloquear."""
+        agent = self._agent
+        root_id = self._root_id(spawner_id)
+        run: Optional[_ParallelRun] = None
+        with self._lock:
+            # La numeración sale de la BD, así no hay contadores que acumular.
+            number = 1 + sum(
+                1
+                for sibling in agent.db.list_subtasks(root_id)
+                if (sibling.subtask_name or "").startswith(PARALLEL_NAME_PREFIX)
+            )
+            name = f"{PARALLEL_NAME_PREFIX}{number}"
+            task = agent.db.create_task(
+                title=f"[{name}] #{root_id}",
+                prompt=prompt,
+                parent_task_id=root_id,
+                subtask_name=name,
+            )
+            assert task.id is not None
+            run = _ParallelRun(task, threading.Event(), threading.Event())
+            if parent_cancel is not None and parent_cancel.is_set():
+                run.cancel.set()
+            self._runs.setdefault(spawner_id, []).append(run)
+            self._active.append(run)
+        agent._log(
+            root_id,
+            EventType.SUBTASK_CREATED,
+            f"➕ Tarea paralela creada: #{task.id} — {name} (lanzada desde #{spawner_id})",
+        )
+        agent.ui_queue.put(
+            {"type": "status_change", "task_id": task.id, "status": TaskStatus.PENDING.value}
+        )
+        threading.Thread(
+            target=self._execute,
+            args=(run, root_id),
+            daemon=True,
+            name=f"parallel-{task.id}",
+        ).start()
+        return task
+
+    def _execute(self, run: _ParallelRun, root_id: int) -> None:
+        agent = self._agent
+        task = run.task
+        assert task.id is not None
+        acquired = False
+        try:
+            while not run.cancel.is_set():
+                if self._slots.acquire(timeout=self.POLL_SECONDS):
+                    acquired = True
+                    break
+            if not acquired:
+                agent._set_status(
+                    task.id,
+                    TaskStatus.CANCELLED,
+                    final_answer="CANCELLED: tarea abortada antes de iniciarse.",
+                )
+                return
+            agent._log(
+                root_id,
+                EventType.SUBTASK_STARTED,
+                f"▶ Iniciando tarea paralela #{task.id} — {task.subtask_name}",
+            )
+            agent.run(task, cancel_event=run.cancel)
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.exception("Error en la tarea paralela %s", task.id)
+            try:
+                agent._set_status(
+                    task.id, TaskStatus.FAILED, final_answer=f"FAILED: {exc}"
+                )
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("No se pudo marcar como FAILED la tarea %s", task.id)
+        finally:
+            if acquired:
+                self._slots.release()
+            try:
+                self._log_outcome(task, root_id)
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("No se pudo registrar el resultado de la tarea %s", task.id)
+            self._drop_claims(task.id)
+            with self._lock:
+                if run in self._active:
+                    self._active.remove(run)
+            run.done.set()
+
+    def _log_outcome(self, task: Task, root_id: int) -> None:
+        assert task.id is not None
+        updated = self._agent.db.get_task(task.id)
+        if updated is not None and updated.status == TaskStatus.COMPLETED:
+            self._agent._log(
+                root_id,
+                EventType.SUBTASK_COMPLETED,
+                f"✔ Tarea paralela #{task.id} completada.",
+            )
+        else:
+            status = updated.status.value if updated is not None else "desconocido"
+            self._agent._log(
+                root_id,
+                EventType.SUBTASK_FAILED,
+                f"✘ Tarea paralela #{task.id} finalizada con estado {status}.",
+            )
+
+    def wait_for_children(
+        self,
+        spawner_id: int,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> List[Task]:
+        """Espera a que terminen todas las tareas lanzadas por ``spawner_id``."""
+        with self._lock:
+            runs = list(self._runs.get(spawner_id, []))
+        if not runs:
+            return []
+        pending = sum(1 for r in runs if not r.done.is_set())
+        if pending:
+            self._agent._log(
+                spawner_id,
+                EventType.INFO,
+                f"⏳ Esperando a que terminen {pending} tarea(s) paralela(s)...",
+            )
+        deadline = None if self.wait_timeout is None else time.monotonic() + self.wait_timeout
+        for run in runs:
+            while not run.done.wait(self.POLL_SECONDS):
+                if cancel_event is not None and cancel_event.is_set():
+                    self._cancel_runs(runs)
+                    return [self._reload(r) for r in runs]
+                if deadline is not None and time.monotonic() >= deadline:
+                    self._agent._log(
+                        spawner_id,
+                        EventType.ERROR,
+                        f"Tiempo de espera agotado ({self.wait_timeout:g} s): "
+                        "se cancelan las tareas paralelas que siguen en marcha.",
+                    )
+                    self._cancel_runs(runs)
+                    grace = time.monotonic() + self.CANCEL_GRACE_SECONDS
+                    for other in runs:
+                        other.done.wait(max(0.0, grace - time.monotonic()))
+                    return [self._reload(r) for r in runs]
+        return [self._reload(r) for r in runs]
+
+    @staticmethod
+    def _cancel_runs(runs: List[_ParallelRun]) -> None:
+        for run in runs:
+            run.cancel.set()
+
+    def wait_for_child(
+        self,
+        spawner_id: int,
+        child_id: int,
+        timeout: Optional[float] = None,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> Optional[Tuple[Task, bool]]:
+        """
+        Espera a una tarea concreta lanzada por ``spawner_id``.
+
+        Devuelve ``(tarea, terminada)`` o ``None`` si ``child_id`` no pertenece
+        a ``spawner_id``. Agotar ``timeout`` no cancela la tarea.
+        """
+        with self._lock:
+            run = next(
+                (r for r in self._runs.get(spawner_id, []) if r.task.id == child_id), None
+            )
+        if run is None:
+            return None
+        limits = [t for t in (timeout, self.wait_timeout) if t is not None and t > 0]
+        deadline = time.monotonic() + min(limits) if limits else None
+        while not run.done.wait(self.POLL_SECONDS):
+            if cancel_event is not None and cancel_event.is_set():
+                break
+            if deadline is not None and time.monotonic() >= deadline:
+                break
+        return self._reload(run), run.done.is_set()
+
+    def _reload(self, run: _ParallelRun) -> Task:
+        assert run.task.id is not None
+        return self._agent.db.get_task(run.task.id) or run.task
+
+    def release(self, spawner_id: int) -> None:
+        """Cancela las tareas pendientes de ``spawner_id`` y olvida su registro."""
+        with self._lock:
+            runs = self._runs.pop(spawner_id, [])
+        for run in runs:
+            if not run.done.is_set():
+                run.cancel.set()
+        self._drop_claims(spawner_id)
+
+    def cancel_all(self) -> None:
+        """Cancela todas las tareas paralelas vivas (p. ej. al cerrar la aplicación)."""
+        with self._lock:
+            runs = list(self._active)
+        self._cancel_runs(runs)
+
+    def wait_all(self, timeout: Optional[float] = None) -> bool:
+        """
+        Espera a que terminen todos los hilos de tareas paralelas vivos.
+
+        Incluye los ya liberados por ``release``. Devuelve ``False`` si
+        se agota ``timeout`` con hilos aún activos.
+        """
+        deadline = None if timeout is None else time.monotonic() + timeout
+        with self._lock:
+            runs = list(self._active)
+        for run in runs:
+            remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+            if not run.done.wait(remaining):
+                return False
+        return True
+
+
 class Agent:
     """
     Bucle de razonamiento del agente (estilo ReAct).
@@ -3436,6 +3829,98 @@ class Agent:
         self.tools = tools
         self.permissions = permissions
         self.ui_queue = ui_queue
+        self.parallel = ParallelTaskManager(self)
+
+    # --- Tareas paralelas ---
+
+    def _spawn_parallel(
+        self,
+        task_id: int,
+        arguments: Dict[str, Any],
+        cancel_event: Optional[threading.Event],
+    ) -> str:
+        if self.parallel.is_parallel_task(task_id):
+            return (
+                "ERROR: una tarea paralela no puede lanzar más tareas paralelas. "
+                "Realiza el trabajo tú mismo."
+            )
+        prompt = str(arguments.get("prompt") or "").strip()
+        if not prompt:
+            return "ERROR: el argumento 'prompt' es obligatorio y no puede estar vacío."
+        child = self.parallel.spawn(task_id, prompt, cancel_event)
+        return (
+            f"OK: tarea paralela #{child.id} lanzada en segundo plano "
+            f"(máximo {self.parallel.max_parallel} simultáneas). Puedes seguir "
+            f"trabajando; su resultado se añadirá a tu respuesta final, o puedes "
+            f"pedirlo antes con {WAIT_PARALLEL_TOOL}."
+        )
+
+    def _wait_parallel(
+        self,
+        task_id: int,
+        arguments: Dict[str, Any],
+        cancel_event: Optional[threading.Event],
+    ) -> str:
+        try:
+            child_id = int(arguments["task_id"])
+            timeout = arguments.get("timeout")
+            timeout = float(timeout) if timeout is not None else None
+        except (KeyError, TypeError, ValueError):
+            return "ERROR: 'task_id' es obligatorio (entero) y 'timeout' debe ser numérico."
+        found = self.parallel.wait_for_child(task_id, child_id, timeout, cancel_event)
+        if found is None:
+            return (
+                f"ERROR: #{child_id} no es una tarea paralela lanzada por esta tarea."
+            )
+        child, finished = found
+        if not finished:
+            return (
+                f"EN CURSO: la tarea paralela #{child.id} sigue {child.status.value}. "
+                f"Puedes volver a esperarla o continuar con otro trabajo."
+            )
+        result = child.final_answer or "(sin resultado)"
+        return f"#{child.id} {child.subtask_name} [{child.status.value}]\n{result}"
+
+    def _claim_file_access(self, task_id: int, tool_name: str, arguments: Dict[str, Any]) -> Optional[str]:
+        """Devuelve un aviso si otra tarea paralela ya ha modificado ese fichero."""
+        if tool_name not in _FILE_MUTATING_TOOLS:
+            return None
+        try:
+            path = _resolve_workspace_path(arguments.get("path", ""))
+        except ValueError:
+            return None  # la propia herramienta informará de la ruta inválida
+        owner = self.parallel.claim_file(task_id, path)
+        if owner is None:
+            return None
+        return (
+            f"AVISO: '{path}' ya está siendo modificado por la tarea #{owner}, que "
+            f"sigue en ejecución. Trabaja en tu propia subcarpeta del workspace "
+            f"para no pisar sus ficheros."
+        )
+
+    def _finalize_answer(
+        self,
+        task_id: int,
+        answer: str,
+        cancel_event: Optional[threading.Event],
+    ) -> Optional[str]:
+        """
+        Espera a las tareas paralelas lanzadas y añade sus resultados a la respuesta.
+
+        Devuelve ``None`` si el usuario cancela mientras se espera.
+        """
+        children = self.parallel.wait_for_children(task_id, cancel_event)
+        if cancel_event is not None and cancel_event.is_set():
+            return None
+        if not children:
+            return answer
+        sections = [answer, "", "RESULTADOS DE LAS TAREAS PARALELAS:"]
+        for child in children:
+            result = child.final_answer or "(sin resultado)"
+            sections.append(
+                f"--- #{child.id} {child.subtask_name} [{child.status.value}] ---\n{result}"
+            )
+        return "\n".join(sections)
 
     # --- Helpers de logging ---
 
@@ -3699,7 +4184,13 @@ class Agent:
 
         # Ejecución.
         try:
-            output = tool.runner(call.arguments)
+            if tool.name == SPAWN_PARALLEL_TOOL:
+                output = self._spawn_parallel(task_id, call.arguments, cancel_event)
+            elif tool.name == WAIT_PARALLEL_TOOL:
+                output = self._wait_parallel(task_id, call.arguments, cancel_event)
+            else:
+                conflict = self._claim_file_access(task_id, tool.name, call.arguments)
+                output = conflict if conflict is not None else tool.runner(call.arguments)
             success = not output.startswith("ERROR")
         except ValueError as e:
             # Aviso de validación (p.ej. ruta fuera del workspace).
@@ -3868,7 +4359,13 @@ class Agent:
         # LOOP_THRESHOLD veces, se compacta el contexto.
         loop_detector = LoopDetector(LOOP_THRESHOLD)
         # El esquema de herramientas viaja en cada petición y consume contexto.
-        tools_schema = self.tools.to_openai_tools()
+        tools_schema = self.tools.to_openai_tools(
+            exclude=(
+                PARALLEL_TOOLS
+                if self.parallel.is_parallel_task(task_id)
+                else ()
+            )
+        )
         schema_chars = len(json.dumps(tools_schema, ensure_ascii=False, default=str))
         llm_kwargs: Dict[str, Any] = {}
         if cancel_event is not None:
@@ -4023,7 +4520,13 @@ class Agent:
                     # Sin tool_calls: decidir si es respuesta final válida
                     # o si hay que forzar el uso de herramientas.
                     if tools_were_used:
-                        final_answer = content or "(sin contenido)"
+                        final_answer = self._finalize_answer(
+                            task_id, content or "(sin contenido)", cancel_event
+                        )
+                        if final_answer is None:
+                            self._log(task_id, EventType.INFO, "Tarea abortada por el usuario.")
+                            self._set_status(task_id, TaskStatus.CANCELLED)
+                            return
                         self._log(task_id, EventType.FINAL_ANSWER, final_answer)
                         self._set_status(
                             task_id,
@@ -4034,7 +4537,13 @@ class Agent:
                     no_tool_streak += 1
                     if no_tool_streak >= 3:
                         # Tras 3 intentos sin tools, aceptar como final.
-                        final_answer = content or "(sin contenido)"
+                        final_answer = self._finalize_answer(
+                            task_id, content or "(sin contenido)", cancel_event
+                        )
+                        if final_answer is None:
+                            self._log(task_id, EventType.INFO, "Tarea abortada por el usuario.")
+                            self._set_status(task_id, TaskStatus.CANCELLED)
+                            return
                         self._log(task_id, EventType.FINAL_ANSWER, final_answer)
                         self._set_status(
                             task_id,
@@ -4121,6 +4630,10 @@ class Agent:
                 self._set_status(task_id, TaskStatus.FAILED)
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("No se pudo marcar como FAILED la tarea %s", task_id)
+        finally:
+            # Si la tarea acaba sin respuesta final (fallo, cancelación...),
+            # las tareas paralelas que sigan activas se cancelan.
+            self.parallel.release(task_id)
 
 
 # ============================================================================

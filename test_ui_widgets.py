@@ -60,7 +60,11 @@ class DashboardWidgetTests(TestCase):
             ToolsRegistry=lambda: object(),
             LLMConnector=lambda: object(),
             PermissionManager=lambda _queue: object(),
-            Agent=lambda *_args: object(),
+            Agent=lambda *_args: types.SimpleNamespace(
+                parallel=types.SimpleNamespace(
+                    cancel_all=lambda: None, wait_all=lambda _timeout=None: True
+                )
+            ),
             TaskOrchestrator=lambda *_args, **_kwargs: object(),
         )
         self.window = QtDashboard(self.core)
