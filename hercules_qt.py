@@ -299,9 +299,11 @@ class BrowserToolBridge(QObject):
             key, text, key_name = self._resolve_qt_key(raw_key)
             web_view = self.dashboard.web_view
             web_view.setFocus(Qt.FocusReason.OtherFocusReason)
+            # QWebEngineView no reenvía teclas a Chromium; hay que enviarlas al focusProxy.
+            target = web_view.focusProxy() or web_view
             for event_type in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
                 QApplication.sendEvent(
-                    web_view,
+                    target,
                     QKeyEvent(
                         event_type,
                         key,
@@ -331,9 +333,10 @@ class BrowserToolBridge(QObject):
         label_json = json.dumps(target_label)
         value = json.dumps(str(arguments.get("text", "")))
         if action == "click":
-            operation = "e.click();"
+            operation = "e.click(); if (e.focus) e.focus();"
         else:
             operation = f"""if (!(e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement || e.isContentEditable)) return 'ERROR: el elemento no admite texto';
+              e.focus();
               if (e.isContentEditable) e.textContent={value};
               else {{ const proto=e instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
                 const setter=Object.getOwnPropertyDescriptor(proto,'value').set;
