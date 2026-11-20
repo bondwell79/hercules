@@ -311,10 +311,17 @@ class QtDashboardLayoutTests(unittest.TestCase):
             bridge._interact(
                 "press_key", {"key": "[ArrowDown]"}, completed, response
             )
+            self.app.processEvents()
 
         set_focus.assert_called_once_with(Qt.FocusReason.OtherFocusReason)
         run_js.assert_not_called()
         self.assertEqual(send_event.call_count, 2)
+        self.assertTrue(
+            all(
+                call.args[0] == self.window.web_view.focusProxy()
+                for call in send_event.call_args_list
+            )
+        )
         events = [call.args[1] for call in send_event.call_args_list]
         self.assertTrue(all(isinstance(event, QKeyEvent) for event in events))
         self.assertEqual(
@@ -325,6 +332,60 @@ class QtDashboardLayoutTests(unittest.TestCase):
         self.assertTrue(all(event.text() == "" for event in events))
         self.assertTrue(completed.is_set())
         self.assertEqual(response["result"], "Tecla enviada: ArrowDown")
+
+    def test_browser_press_key_reaches_focused_page_element(self):
+        self.window.show()
+        self.window.workspace_tabs.setCurrentIndex(
+            self.window.workspace_tabs.indexOf(self.window.web_view.parentWidget())
+        )
+        page_path = Path(self.workspace_dir.name) / "key-input.html"
+        page_path.write_text(
+            "<input id='target'><script>"
+            "window.keyEvents = [];"
+            "const input = document.getElementById('target');"
+            "input.addEventListener('keydown', e => window.keyEvents.push(e.key));"
+            "input.focus();"
+            "</script>",
+            encoding="utf-8",
+        )
+        loaded = QEventLoop()
+        load_timer = QTimer()
+        load_timer.setSingleShot(True)
+        load_timer.timeout.connect(loaded.quit)
+        self.window.web_view.loadFinished.connect(loaded.quit)
+        self.window.web_view.setUrl(QUrl.fromLocalFile(str(page_path)))
+        load_timer.start(15000)
+        loaded.exec()
+        self.window.web_view.loadFinished.disconnect(loaded.quit)
+        self.assertEqual(self.window.web_view.url(), QUrl.fromLocalFile(str(page_path)))
+
+        bridge = BrowserToolBridge(self.window)
+        completed = threading.Event()
+        response = {}
+        bridge._execute(("press_key", {"key": "x"}, completed, response))
+
+        loop = QEventLoop()
+        result = []
+        timer = QTimer()
+        timer.setSingleShot(True)
+        timer.timeout.connect(loop.quit)
+        script = (
+            "JSON.stringify({active: document.activeElement.id, "
+            "value: document.activeElement.value, keys: window.keyEvents})"
+        )
+        QTimer.singleShot(
+            100,
+            lambda: self.window.web_view.page().runJavaScript(
+                script,
+                lambda value: (result.append(value), loop.quit()),
+            ),
+        )
+        timer.start(5000)
+        loop.exec()
+
+        self.assertTrue(completed.is_set())
+        self.assertEqual(response["result"], "Tecla enviada: x")
+        self.assertEqual(result, ['{"active":"target","value":"x","keys":["x"]}'])
 
     def test_browser_press_key_resolves_bracketed_names_and_rejects_unknown_keys(self):
         key, text, name = BrowserToolBridge._resolve_qt_key("[Enter]")

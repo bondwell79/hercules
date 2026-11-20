@@ -353,19 +353,22 @@ class BrowserToolBridge(QObject):
             key, text, key_name = self._resolve_qt_key(raw_key)
             web_view = self.dashboard.web_view
             web_view.setFocus(Qt.FocusReason.OtherFocusReason)
-            # QWebEngineView no reenvía teclas a Chromium; hay que enviarlas al focusProxy.
-            target = web_view.focusProxy() or web_view
-            for event_type in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
-                QApplication.sendEvent(
-                    target,
-                    QKeyEvent(
-                        event_type,
-                        key,
-                        Qt.KeyboardModifier.NoModifier,
-                        text,
-                    ),
-                )
-            self._finish(completed, response, f"Tecla enviada: {key_name}")
+
+            def _send_key_events() -> None:
+                target = web_view.focusProxy() or web_view
+                for event_type in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
+                    QApplication.sendEvent(
+                        target,
+                        QKeyEvent(
+                            event_type,
+                            key,
+                            Qt.KeyboardModifier.NoModifier,
+                            text,
+                        ),
+                    )
+                self._finish(completed, response, f"Tecla enviada: {key_name}")
+
+            QTimer.singleShot(0, _send_key_events)
             return
 
         raw_ref = str(arguments.get("ref", "")).strip().lstrip("@")
