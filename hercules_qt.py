@@ -5,6 +5,7 @@ from __future__ import annotations
 import configparser
 import json
 import logging
+import math
 import queue
 import threading
 import time
@@ -14,7 +15,17 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
-from PySide6.QtCore import QEvent, QObject, QTimer, QUrl, Qt, Signal, Slot
+from PySide6.QtCore import (
+    QEvent,
+    QObject,
+    QPoint,
+    QPointF,
+    QTimer,
+    QUrl,
+    Qt,
+    Signal,
+    Slot,
+)
 from PySide6.QtGui import (
     QAction,
     QDesktopServices,
@@ -24,6 +35,7 @@ from PySide6.QtGui import (
     QFontDatabase,
     QKeyEvent,
     QKeySequence,
+    QMouseEvent,
     QPainter,
     QPainterPath,
     QPen,
@@ -390,9 +402,103 @@ class BrowserToolBridge(QObject):
         label_json = json.dumps(target_label)
         value = json.dumps(str(arguments.get("text", "")))
         if action == "click":
-            operation = "e.click(); if (e.focus) e.focus();"
-        else:
-            operation = f"""if (!(e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement || e.isContentEditable)) return 'ERROR: el elemento no admite texto';
+            script = f"""(() => {{ let e; try {{ e=document.querySelector({selector_json}); }} catch (error) {{ return 'ERROR: selector CSS inválido'; }}
+              if (!e) return 'ERROR: no se encontró el elemento';
+              e.scrollIntoView({{block:'center', inline:'center'}});
+              const rect=e.getBoundingClientRect();
+              if (!rect.width || !rect.height) return 'ERROR: el elemento no tiene un área visible';
+              return JSON.stringify({{x:rect.left+rect.width/2,y:rect.top+rect.height/2,
+                width:window.innerWidth,height:window.innerHeight,tag:e.tagName.toLowerCase()}});
+            }})()"""
+
+            def _click_ready(result: Any) -> None:
+                if not isinstance(result, str):
+                    self._finish(completed, response, "ERROR: no se pudo obtener la posición del elemento")
+                    return
+                if result.startswith("ERROR:"):
+                    self._finish(completed, response, result)
+                    return
+                try:
+                    position = json.loads(result)
+                    x = position["x"]
+                    y = position["y"]
+                    viewport_width = position["width"]
+                    viewport_height = position["height"]
+                    tag_name = position["tag"]
+                    if any(
+                        isinstance(value, bool)
+                        or not isinstance(value, (int, float))
+                        or not math.isfinite(value)
+                        for value in (x, y, viewport_width, viewport_height)
+                    ):
+                        raise ValueError
+                    if (
+                        viewport_width <= 0
+                        or viewport_height <= 0
+                        or not isinstance(tag_name, str)
+                    ):
+                        raise ValueError
+                except (KeyError, TypeError, ValueError):
+                    self._finish(completed, response, "ERROR: posición del elemento no válida")
+                    return
+
+                web_view = self.dashboard.web_view
+                scaled_x = x * web_view.width() / viewport_width
+                scaled_y = y * web_view.height() / viewport_height
+                if not 0 <= scaled_x < web_view.width() or not 0 <= scaled_y < web_view.height():
+                    self._finish(completed, response, "ERROR: el elemento está fuera del área visible")
+                    return
+                web_view.setFocus(Qt.FocusReason.OtherFocusReason)
+
+                def _send_mouse_events() -> None:
+                    target = web_view.focusProxy() or web_view
+                    widget_position = web_view.mapToGlobal(
+                        QPoint(round(scaled_x), round(scaled_y))
+                    )
+                    local_position = QPointF(target.mapFromGlobal(widget_position))
+                    global_position = QPointF(widget_position)
+                    events = (
+                        (
+                            QEvent.Type.MouseMove,
+                            Qt.MouseButton.NoButton,
+                            Qt.MouseButton.NoButton,
+                        ),
+                        (
+                            QEvent.Type.MouseButtonPress,
+                            Qt.MouseButton.LeftButton,
+                            Qt.MouseButton.LeftButton,
+                        ),
+                        (
+                            QEvent.Type.MouseButtonRelease,
+                            Qt.MouseButton.LeftButton,
+                            Qt.MouseButton.NoButton,
+                        ),
+                    )
+                    for event_type, button, buttons in events:
+                        QApplication.sendEvent(
+                            target,
+                            QMouseEvent(
+                                event_type,
+                                local_position,
+                                global_position,
+                                button,
+                                buttons,
+                                Qt.KeyboardModifier.NoModifier,
+                            ),
+                        )
+                    self._invalidate_refs()
+                    self._finish(
+                        completed,
+                        response,
+                        f"OK: {tag_name} ({target_label})",
+                    )
+
+                QTimer.singleShot(0, _send_mouse_events)
+
+            self.dashboard.web_view.page().runJavaScript(script, _click_ready)
+            return
+
+        operation = f"""if (!(e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement || e.isContentEditable)) return 'ERROR: el elemento no admite texto';
               e.focus();
               if (e.isContentEditable) e.textContent={value};
               else {{ const proto=e instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;

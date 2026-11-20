@@ -1,5 +1,6 @@
 """Headless Qt dashboard layout and JavaScript smoke tests."""
 
+import json
 import os
 import tempfile
 import threading
@@ -234,9 +235,104 @@ class QtDashboardLayoutTests(unittest.TestCase):
                     bridge._interact(action, arguments, completed, response)
                 self.assertIn("data-hercules-ref=", callbacks[0][0])
                 self.assertIn(action and arguments["ref"].lstrip("@"), callbacks[0][0])
-                callbacks[0][1]("OK: control (@e1)")
+                if action == "click":
+                    self.assertIn("getBoundingClientRect()", callbacks[0][0])
+                    self.assertNotIn(".click()", callbacks[0][0])
+                    with (
+                        patch.object(self.window.web_view, "width", return_value=100),
+                        patch.object(self.window.web_view, "height", return_value=100),
+                    ):
+                        callbacks[0][1](
+                            '{"x":10,"y":20,"width":100,"height":100,"tag":"button"}'
+                        )
+                        self.app.processEvents()
+                else:
+                    callbacks[0][1]("OK: control (@e1)")
                 self.assertTrue(completed.is_set())
                 self.assertEqual(bridge._active_refs, set())
+
+    def test_browser_mouse_tools_dispatch_click_and_scroll_in_webengine(self):
+        self.window.resize(1000, 800)
+        self.window.show()
+        page_path = Path(self.workspace_dir.name) / "mouse-tools.html"
+        page_path.write_text(
+            "<button id='target' style='position:absolute;left:20px;top:20px'>Click</button>"
+            "<div style='height:3000px'></div>"
+            "<script>"
+            "window.mouseEvents=[];"
+            "for (const type of ['pointerdown','mousedown','mouseup','click'])"
+            "document.addEventListener(type,e=>window.mouseEvents.push("
+            "{type:e.type,trusted:e.isTrusted,target:e.target.id}));"
+            "</script>",
+            encoding="utf-8",
+        )
+        page = self.window.web_view.page()
+        loop = QEventLoop()
+        load_timer = QTimer()
+        load_timer.setSingleShot(True)
+        load_timer.timeout.connect(loop.quit)
+        self.window.web_view.loadFinished.connect(loop.quit)
+        self.window.web_view.setUrl(QUrl.fromLocalFile(str(page_path)))
+        load_timer.start(15000)
+        loop.exec()
+        self.window.web_view.loadFinished.disconnect(loop.quit)
+
+        def wait_for_tool(completed):
+            wait_loop = QEventLoop()
+            poll = QTimer()
+            poll.timeout.connect(
+                lambda: wait_loop.quit() if completed.is_set() else None
+            )
+            poll.start(1)
+            timeout = QTimer()
+            timeout.setSingleShot(True)
+            timeout.timeout.connect(wait_loop.quit)
+            timeout.start(5000)
+            wait_loop.exec()
+            poll.stop()
+            self.assertTrue(completed.is_set())
+
+        def evaluate(script):
+            values = []
+            eval_loop = QEventLoop()
+            eval_timer = QTimer()
+            eval_timer.setSingleShot(True)
+            eval_timer.timeout.connect(eval_loop.quit)
+            page.runJavaScript(
+                script, lambda value: (values.append(value), eval_loop.quit())
+            )
+            eval_timer.start(5000)
+            eval_loop.exec()
+            self.assertEqual(len(values), 1)
+            return values[0]
+
+        bridge = BrowserToolBridge(self.window)
+        self.window.workspace_tabs.setCurrentIndex(0)
+        completed = threading.Event()
+        response = {}
+        bridge._execute(("click", {"selector": "#target"}, completed, response))
+        wait_for_tool(completed)
+        self.assertEqual(
+            self.window.workspace_tabs.currentIndex(),
+            self.window.workspace_tabs.indexOf(self.window.web_view.parentWidget()),
+        )
+        self.assertTrue(response["result"].startswith("OK: button"))
+        mouse_events = json.loads(evaluate("JSON.stringify(window.mouseEvents)"))
+        self.assertEqual(
+            [event["type"] for event in mouse_events],
+            ["pointerdown", "mousedown", "mouseup", "click"],
+        )
+        self.assertTrue(all(event["trusted"] for event in mouse_events))
+        self.assertTrue(all(event["target"] == "target" for event in mouse_events))
+
+        completed = threading.Event()
+        response = {}
+        bridge._execute(
+            ("scroll", {"direction": "down", "amount": 400}, completed, response)
+        )
+        wait_for_tool(completed)
+        self.assertIn("posición vertical: 400", response["result"])
+        self.assertEqual(evaluate("window.scrollY"), 400)
 
     def test_browser_ref_must_be_current_and_css_selector_stays_supported(self):
         bridge = BrowserToolBridge(self.window)
