@@ -157,16 +157,31 @@ class MockLLM:
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[str] = None,
     ) -> Dict[str, Any]:
-        self.calls.append({"messages": messages, "tools": tools, "tool_choice": tool_choice})
+        self.calls.append(
+            {
+                "messages": [dict(message) for message in messages],
+                "tools": tools,
+                "tool_choice": tool_choice,
+            }
+        )
         if self.call_count >= len(self.responses):
             # Por defecto, respuesta final vacía.
             return {
                 "choices": [
-                    {"message": {"role": "assistant", "content": "(sin más respuestas)", "tool_calls": []}}
+                    {
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": "(sin más respuestas)", "tool_calls": []},
+                    }
                 ]
             }
         resp = self.responses[self.call_count]
         self.call_count += 1
+        for choice in resp.get("choices", []):
+            if isinstance(choice, dict) and "finish_reason" not in choice:
+                message = choice.get("message", {})
+                choice["finish_reason"] = (
+                    "tool_calls" if message.get("tool_calls") else "stop"
+                )
         return resp
 
 
@@ -1181,6 +1196,80 @@ def test_agent_run_with_exceptions(tmp_dir: str, workspace: str) -> None:
     agent.run(task)
     final = db.get_task(task.id)
     assert_eq(final.status, ga.TaskStatus.FAILED, "agent: tool_call malformado -> FAILED")
+
+    # Escenarios F-G: la respuesta inválida se reconduce y puede completarse.
+    for finish_reason in (None, "length"):
+        db = make_test_db(tmp_dir)
+        ui_queue = queue.Queue()
+        response = {
+            "choices": [
+                {
+                    "finish_reason": finish_reason,
+                    "message": {
+                        "role": "assistant",
+                        "content": "Respuesta incompleta.",
+                        "tool_calls": [],
+                    },
+                }
+            ]
+        }
+        llm = MockLLM(
+            [
+                response,
+                {"choices": [{"message": {"role": "assistant", "content": "Intento 1."}}]},
+                {"choices": [{"message": {"role": "assistant", "content": "Intento 2."}}]},
+                {"choices": [{"message": {"role": "assistant", "content": "Respuesta completa."}}]},
+            ]
+        )
+        agent = ga.Agent(db, llm, tools, permissions, ui_queue)
+        task = db.create_task("Test invalid finish reason", "haz algo")
+        agent.run(task)
+        final = db.get_task(task.id)
+        assert_eq(
+            final.status,
+            ga.TaskStatus.COMPLETED,
+            f"agent: finish_reason={finish_reason!r} se reconduce",
+        )
+        assert_eq(final.final_answer, "Respuesta completa.", "agent: reintento produce respuesta final")
+        retry_messages = llm.calls[1]["messages"]
+        assert_eq(retry_messages[-1]["role"], "user", "agent: la reconducción se envía como mensaje user")
+        assert_true(
+            "no terminó correctamente" in retry_messages[-1]["content"],
+            "agent: el mensaje de reconducción explica que la respuesta llegó incompleta",
+        )
+
+    # Una respuesta bloqueada recibe una orientación segura, sin invitar a evadir el filtro.
+    db = make_test_db(tmp_dir)
+    ui_queue = queue.Queue()
+    llm = MockLLM(
+        [
+            {
+                "choices": [
+                    {
+                        "finish_reason": "content_filter",
+                        "message": {
+                            "role": "assistant",
+                            "content": "contenido bloqueado",
+                            "tool_calls": [],
+                        },
+                    }
+                ]
+            },
+            {"choices": [{"message": {"role": "assistant", "content": "No puedo ayudar con eso."}}]},
+            {"choices": [{"message": {"role": "assistant", "content": "Puedo ofrecer una alternativa segura."}}]},
+            {"choices": [{"message": {"role": "assistant", "content": "Alternativa segura."}}]},
+        ]
+    )
+    agent = ga.Agent(db, llm, tools, permissions, ui_queue)
+    task = db.create_task("Test content filter guidance", "haz algo")
+    agent.run(task)
+    final = db.get_task(task.id)
+    assert_eq(final.status, ga.TaskStatus.COMPLETED, "agent: content_filter se reconduce")
+    filter_guidance = llm.calls[1]["messages"][-1]["content"]
+    assert_true(
+        "No intentes eludirla" in filter_guidance,
+        "agent: el mensaje de reconducción no invita a evadir restricciones",
+    )
 
 
 # ============================================================================

@@ -156,6 +156,7 @@ class MockLLM:
                 return {
                     "choices": [
                         {
+                            "finish_reason": "stop",
                             "message": {
                                 "role": "assistant",
                                 "content": "(sin más respuestas)",
@@ -166,6 +167,12 @@ class MockLLM:
                 }
             resp = self.responses[self.call_count]
             self.call_count += 1
+            for choice in resp.get("choices", []):
+                if isinstance(choice, dict) and "finish_reason" not in choice:
+                    message = choice.get("message", {})
+                    choice["finish_reason"] = (
+                        "tool_calls" if message.get("tool_calls") else "stop"
+                    )
             return resp
 
 

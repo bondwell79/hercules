@@ -23,7 +23,10 @@ import hercules as ga  # noqa: E402
 def _message(content: Optional[str], tool_calls: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     return {
         "choices": [
-            {"message": {"role": "assistant", "content": content, "tool_calls": tool_calls or []}}
+            {
+                "finish_reason": "tool_calls" if tool_calls else "stop",
+                "message": {"role": "assistant", "content": content, "tool_calls": tool_calls or []},
+            }
         ]
     }
 

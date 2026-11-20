@@ -2470,6 +2470,32 @@ class LLMConnector:
 
         return content, tool_calls
 
+    @staticmethod
+    def validate_finish_reason(raw: Dict[str, Any], has_tool_calls: bool) -> None:
+        """Rechaza respuestas que no terminaron normalmente o cuyo fin es inconsistente."""
+        try:
+            choice = raw["choices"][0]
+        except (KeyError, IndexError, TypeError) as e:
+            raise LLMError("Respuesta LLM sin 'choices[0].finish_reason'") from e
+
+        finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+        if not isinstance(finish_reason, str) or not finish_reason.strip():
+            raise LLMError("Respuesta LLM sin un 'finish_reason' válido")
+        if finish_reason == "stop":
+            return
+        if finish_reason == "tool_calls" and has_tool_calls:
+            return
+        if finish_reason == "tool_calls":
+            raise LLMError(
+                "Respuesta LLM con finish_reason='tool_calls' pero sin llamadas a herramientas válidas"
+            )
+        if finish_reason in {"length", "content_filter"}:
+            raise LLMError(
+                f"Respuesta LLM no finalizada normalmente "
+                f"(finish_reason='{finish_reason}'); no se aceptará como respuesta final"
+            )
+        raise LLMError(f"Respuesta LLM con finish_reason no admitido: {finish_reason!r}")
+
 
 # ============================================================================
 # HERRAMIENTAS (TOOLS)
@@ -4703,6 +4729,37 @@ class Agent:
                     return
 
                 content, tool_calls = LLMConnector.parse_assistant_message(raw)
+                try:
+                    LLMConnector.validate_finish_reason(raw, bool(tool_calls))
+                except LLMError as e:
+                    is_content_filter = "content_filter" in str(e)
+                    self._log(
+                        task_id,
+                        EventType.INFO,
+                        f"Respuesta LLM incompleta o no válida; se solicitará otra: {e}",
+                    )
+                    if is_content_filter:
+                        assistant_content = "(respuesta bloqueada por una restricción de seguridad)"
+                        guidance = (
+                            "La respuesta anterior fue bloqueada por una restricción de seguridad. "
+                            "No intentes eludirla ni reformularla para sortearla. Explica brevemente "
+                            "qué parte no puedes ayudar a realizar y, si es posible, ofrece una "
+                            "alternativa segura."
+                        )
+                    else:
+                        assistant_content = (
+                            content if isinstance(content, str) and content else "(respuesta incompleta)"
+                        )
+                        guidance = (
+                            "La respuesta anterior no terminó correctamente o llegó incompleta. "
+                            "No la presentes como resultado final ni afirmes que completaste trabajo "
+                            "pendiente. Retoma la tarea y complétala; si necesitas herramientas, "
+                            "emite llamadas válidas y espera sus resultados. Si no puedes completarla, "
+                            "explica claramente qué falta."
+                        )
+                    messages.append({"role": "assistant", "content": assistant_content})
+                    messages.append({"role": "user", "content": guidance})
+                    continue
 
                 # Detección de bucles: si la misma respuesta (contenido +
                 # tool_calls) se repite LOOP_THRESHOLD veces, se compacta

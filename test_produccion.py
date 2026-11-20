@@ -113,13 +113,21 @@ class _ScriptedLLM:
 
     @staticmethod
     def _final(text: str) -> dict:
-        return {"choices": [{"message": {"role": "assistant", "content": text}}]}
+        return {
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": text},
+                }
+            ]
+        }
 
     @staticmethod
     def tool_call(name: str, args: dict, call_id: str = "c1") -> dict:
         return {
             "choices": [
                 {
+                    "finish_reason": "tool_calls",
                     "message": {
                         "role": "assistant",
                         "content": None,

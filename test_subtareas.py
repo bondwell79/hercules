@@ -200,6 +200,7 @@ def _final_response(content: str) -> Dict[str, Any]:
     return {
         "choices": [
             {
+                "finish_reason": "stop",
                 "message": {
                     "role": "assistant",
                     "content": content,
@@ -215,6 +216,7 @@ def _tool_response(name: str, args: Dict[str, Any], content: str = "OK") -> Dict
     return {
         "choices": [
             {
+                "finish_reason": "tool_calls",
                 "message": {
                     "role": "assistant",
                     "content": None,
