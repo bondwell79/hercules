@@ -30,6 +30,7 @@
 | `read_file` | Lee el contenido de un archivo de texto |
 | `read_binary_file` | Lee un archivo binario (devuelve Base64, máx. 50000 bytes) |
 | `read_binary_hex` | Muestra un volcado hexadecimal de un archivo binario |
+| `read_media_file` | Adjunta imágenes y fotogramas de vídeo; para audio devuelve metadatos |
 | `write_file` | Escribe contenido en un archivo (crea directorios si no existen) |
 | `create_file` | Crea un archivo nuevo sin sobrescribir |
 | `edit_file` | Reemplaza una cadena exacta en un archivo |
@@ -44,6 +45,7 @@
 |---|---|
 | `browser_navigate` | Navega a una URL HTTP(S) o documento local |
 | `browser_snapshot` | Devuelve URL, título, texto y controles interactivos |
+| `browser_console` | Devuelve mensajes de consola JavaScript pendientes |
 | `browser_click` | Hace clic en un control (por referencia) |
 | `browser_fill` | Rellena un campo de formulario |
 | `browser_scroll` | Desplaza la página |

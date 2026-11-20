@@ -48,7 +48,7 @@ import urllib.error
 import urllib.request
 import uuid
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
@@ -77,7 +77,7 @@ def _app_path(value: str) -> str:
 
 
 CONFIG_PATH = os.environ.get("HERCULES_CONFIG") or _app_path("config.ini")
-VERSION = "1.95"
+VERSION = "2.0"
 SUBTAREAS_INI_PATH = os.environ.get("HERCULES_SUBTAREAS_INI") or _app_path("subtareas.ini")
 
 # Patrones peligrosos organizados por categoría.
@@ -205,7 +205,7 @@ class Config:
             "font_size": "10",
         },
         "Agent": {
-            "system_prompt": "Eres un agente autónomo eficiente. Tu objetivo es resolver la tarea del usuario utilizando las herramientas disponibles en el entorno de manera ordenada. Si necesitas actuar, emite tool_calls; si tienes la respuesta final, responde solo con texto.",
+            "system_prompt": "Eres un agente autónomo eficiente. Tu objetivo es resolver la tarea del usuario utilizando las herramientas (tool_calls) disponibles en el entorno de manera ordenada. Si te solicitan acceder a recursos de internet prioriza el uso de herramientas de navegador (browser). Si utilizas ejecución de comandos evita usar aquellos que sean bloqueantes (por ejemplo levantar un servidor a la espera). Si debes desarrollar aplicaciones con javascript usa browser_console para verificar errores.",
             "max_iterations": "10",
             "loop_threshold": "5",
             "max_parallel_tasks": "3",
@@ -1243,6 +1243,15 @@ class ToolResult:
     success: bool
     output: str
     image_data: Optional[str] = None
+    media_images: List[Tuple[str, str]] = field(default_factory=list)
+
+
+@dataclass
+class ToolMediaOutput:
+    """Texto y adjuntos multimodales devueltos por una herramienta."""
+
+    output: str
+    images: List[Tuple[str, str]] = field(default_factory=list)
 
 
 def _screenshot_data_uri(output: str) -> Optional[str]:
@@ -1297,6 +1306,24 @@ def _image_message(image_data: str) -> Dict[str, Any]:
             {"type": "image_url", "image_url": {"url": image_data}},
         ],
     }
+
+
+def _media_images_message(images: List[Tuple[str, str]]) -> Dict[str, Any]:
+    """Agrupa imágenes con sus descripciones en un único mensaje multimodal."""
+    content: List[Dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": "Analiza las imágenes adjuntas como contenido del archivo solicitado.",
+        }
+    ]
+    for description, image_data in images:
+        content.extend(
+            [
+                {"type": "text", "text": description},
+                {"type": "image_url", "image_url": {"url": image_data}},
+            ]
+        )
+    return {"role": "user", "content": content}
 
 
 # ============================================================================
@@ -2455,7 +2482,7 @@ class ToolDefinition:
     description: str
     risk: RiskLevel
     parameters: Dict[str, Any]
-    runner: Callable[[Dict[str, Any]], str]
+    runner: Callable[[Dict[str, Any]], str | ToolMediaOutput]
 
 
 def _resolve_workspace_path(path: str) -> Path:
@@ -2508,6 +2535,162 @@ def tool_read_binary_file(args: Dict[str, Any]) -> str:
     if truncated:
         result += "\n... [truncado a 50000 bytes]"
     return result
+
+
+def _encode_media_image(image: Any) -> str:
+    """Reduce una imagen a un JPEG compacto para adjuntarlo al modelo."""
+    from PIL import ImageOps
+
+    image = ImageOps.exif_transpose(image).convert("RGB")
+    image.thumbnail((1536, 1536))
+    for quality in (85, 75, 65):
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=quality, optimize=True)
+        image_bytes = buffer.getvalue()
+        if len(image_bytes) <= 1024 * 1024:
+            encoded = base64.b64encode(image_bytes).decode("ascii")
+            return f"data:image/jpeg;base64,{encoded}"
+    image.thumbnail((1024, 1024))
+    for quality in (65, 55):
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=quality, optimize=True)
+        image_bytes = buffer.getvalue()
+        if len(image_bytes) <= 1024 * 1024:
+            encoded = base64.b64encode(image_bytes).decode("ascii")
+            return f"data:image/jpeg;base64,{encoded}"
+    raise RuntimeError("la imagen supera el límite de 1 MiB después de comprimirla")
+
+
+def _format_media_time(seconds: float) -> str:
+    milliseconds = max(0, int(seconds * 1000))
+    hours, remainder = divmod(milliseconds, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    secs, millis = divmod(remainder, 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{millis:03d}"
+
+
+def _read_video_media(path: Path, max_frames: int) -> ToolMediaOutput:
+    import cv2
+    from PIL import Image
+
+    capture = cv2.VideoCapture(str(path))
+    try:
+        if not capture.isOpened():
+            return ToolMediaOutput(f"ERROR: no se pudo abrir el vídeo: {path}")
+
+        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = float(capture.get(cv2.CAP_PROP_FPS))
+        if frame_count <= 0 or not math.isfinite(fps) or fps <= 0:
+            return ToolMediaOutput(
+                f"ERROR: no se pudieron determinar los fotogramas o la duración del vídeo: {path}"
+            )
+
+        sample_count = min(max_frames, frame_count)
+        frame_indices = (
+            [0]
+            if sample_count == 1
+            else [
+                round(index * (frame_count - 1) / (sample_count - 1))
+                for index in range(sample_count)
+            ]
+        )
+        images = []
+        for sample_index, frame_index in enumerate(frame_indices, start=1):
+            if not capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index):
+                return ToolMediaOutput(
+                    f"ERROR: no se pudo buscar el fotograma {frame_index} del vídeo: {path}"
+                )
+            success, frame = capture.read()
+            if not success or frame is None:
+                return ToolMediaOutput(
+                    f"ERROR: no se pudo decodificar el fotograma {frame_index} del vídeo: {path}"
+                )
+            try:
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                image_data = _encode_media_image(Image.fromarray(rgb_frame))
+            except (OSError, ValueError, RuntimeError) as exc:
+                return ToolMediaOutput(
+                    f"ERROR: no se pudo preparar el fotograma {frame_index}: {exc}"
+                )
+            timestamp = _format_media_time(frame_index / fps)
+            images.append(
+                (f"Fotograma {sample_index}/{sample_count} en {timestamp}", image_data)
+            )
+
+        duration = frame_count / fps
+        output = (
+            f"Vídeo adjuntado como {len(images)} fotogramas representativos: "
+            f"{path.name} ({frame_count} fotogramas, {fps:.2f} fps, "
+            f"{_format_media_time(duration)}). El audio del vídeo no se ha transcrito "
+            "ni adjuntado."
+        )
+        return ToolMediaOutput(output, images)
+    finally:
+        capture.release()
+
+
+def tool_read_media_file(args: Dict[str, Any]) -> ToolMediaOutput:
+    """Adjunta imágenes o fotogramas de vídeo; para audio devuelve metadatos."""
+    path = _resolve_workspace_path(args.get("path", ""))
+    if not path.exists():
+        return ToolMediaOutput(f"ERROR: el archivo no existe: {path}")
+    if not path.is_file():
+        return ToolMediaOutput(f"ERROR: no es un archivo: {path}")
+
+    max_frames = args.get("max_frames", 8)
+    if (
+        isinstance(max_frames, bool)
+        or not isinstance(max_frames, int)
+        or not 1 <= max_frames <= 8
+    ):
+        return ToolMediaOutput("ERROR: 'max_frames' debe ser un entero entre 1 y 8")
+
+    suffix = path.suffix.lower()
+    video_extensions = {".avi", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".webm", ".wmv"}
+    audio_extensions = {
+        ".aac", ".aif", ".aiff", ".flac", ".m4a", ".mka", ".mp3",
+        ".ogg", ".opus", ".wav", ".wma",
+    }
+
+    if suffix in video_extensions:
+        return _read_video_media(path, max_frames)
+    if suffix in audio_extensions:
+        details = f"Audio: {path.name} ({suffix[1:].upper()}, {path.stat().st_size} bytes)."
+        if suffix == ".wav":
+            import wave
+
+            with wave.open(str(path), "rb") as audio_file:
+                sample_rate = audio_file.getframerate()
+                duration = audio_file.getnframes() / sample_rate
+                details += (
+                    f" Duración: {_format_media_time(duration)}, "
+                    f"{audio_file.getnchannels()} canal(es), {sample_rate} Hz."
+                )
+        return ToolMediaOutput(
+            f"{details} Solo se devolvieron metadatos; el audio no se transcribió "
+            "ni se adjuntó al modelo."
+        )
+
+    try:
+        from PIL import Image
+
+        with Image.open(path) as image:
+            image.seek(0)
+            image.load()
+            width, height = image.size
+            image_format = image.format or suffix.lstrip(".").upper()
+            image_data = _encode_media_image(image)
+    except (OSError, ValueError) as exc:
+        return ToolMediaOutput(
+            f"ERROR: formato multimedia no compatible o archivo ilegible "
+            f"({path}): {exc}"
+        )
+
+    output = (
+        f"Imagen adjuntada al modelo: {path.name} "
+        f"({image_format}, {width}x{height}; optimizada como JPEG)."
+    )
+    return ToolMediaOutput(output, [(f"Imagen: {path.name}", image_data)])
 
 
 def tool_read_binary_hex(args: Dict[str, Any]) -> str:
@@ -2917,6 +3100,39 @@ class ToolsRegistry:
                     "required": ["path"],
                 },
                 runner=tool_read_binary_file,
+            )
+        )
+        self.register(
+            ToolDefinition(
+                name="read_media_file",
+                description=(
+                    "Lee medios del workspace y entrega su contenido visual al modelo: "
+                    "adjunta imágenes optimizadas y hasta 8 fotogramas representativos "
+                    "de un vídeo. Para audio devuelve solo metadatos; no transcribe ni "
+                    "adjunta el audio. Argumentos: path y max_frames opcional (1–8, "
+                    "por defecto 8)."
+                ),
+                risk=RiskLevel.SAFE,
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Ruta del archivo multimedia dentro del workspace.",
+                        },
+                        "max_frames": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 8,
+                            "description": (
+                                "Máximo de fotogramas que se adjuntarán para un vídeo "
+                                "(por defecto 8)."
+                            ),
+                        },
+                    },
+                    "required": ["path"],
+                },
+                runner=tool_read_media_file,
             )
         )
         self.register(
@@ -4183,6 +4399,7 @@ class Agent:
             self._set_status(task_id, TaskStatus.IN_PROGRESS)
 
         # Ejecución.
+        media_images: List[Tuple[str, str]] = []
         try:
             if tool.name == SPAWN_PARALLEL_TOOL:
                 output = self._spawn_parallel(task_id, call.arguments, cancel_event)
@@ -4190,16 +4407,33 @@ class Agent:
                 output = self._wait_parallel(task_id, call.arguments, cancel_event)
             else:
                 conflict = self._claim_file_access(task_id, tool.name, call.arguments)
-                output = conflict if conflict is not None else tool.runner(call.arguments)
+                tool_output = (
+                    conflict
+                    if conflict is not None
+                    else tool.runner(call.arguments)
+                )
+                if isinstance(tool_output, ToolMediaOutput):
+                    output = tool_output.output
+                    media_images = tool_output.images
+                else:
+                    output = tool_output
             success = not output.startswith("ERROR")
         except ValueError as e:
             # Aviso de validación (p.ej. ruta fuera del workspace).
             # Se envía al modelo como información, no como error de ejecución,
             # para que reformule la petición con una ruta válida.
+            valid_path_hint = ""
+            if "Ruta fuera del workspace permitido" in str(e):
+                requested_name = Path(str(call.arguments.get("path", ""))).name
+                if requested_name in {"", ".", ".."}:
+                    requested_name = "archivo"
+                valid_path_hint = (
+                    f" Ruta válida sugerida: {WORKSPACE_DIR / requested_name}."
+                )
             output = (
                 f"AVISO: {e}. "
                 f"Solo puedes acceder a rutas dentro del workspace permitido: "
-                f"{WORKSPACE_DIR}. "
+                f"{WORKSPACE_DIR}.{valid_path_hint} "
                 f"Por favor, reformula tu petición usando una ruta válida "
                 f"relativa al workspace (por ejemplo, 'mi_archivo.txt' o "
                 f"'subdirectorio/mi_archivo.txt') y vuelve a intentarlo."
@@ -4238,7 +4472,9 @@ class Agent:
             if success and tool.name in {"take_screenshot", "browser_screenshot"}
             else None
         )
-        return ToolResult(call.id, call.name, success, output, image_data)
+        return ToolResult(
+            call.id, call.name, success, output, image_data, media_images
+        )
 
     # --- Estimación de uso de contexto ---
 
@@ -4594,6 +4830,10 @@ class Agent:
                     )
                     if result.image_data:
                         image_messages.append(_image_message(result.image_data))
+                    if result.media_images:
+                        image_messages.append(
+                            _media_images_message(result.media_images)
+                        )
                     if tc.name in {"create_file", "edit_file", "write_file"} and result.success:
                         self.ui_queue.put(
                             {

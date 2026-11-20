@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import os
 import random
 import sys
@@ -11,6 +12,7 @@ import tempfile
 import time
 import types
 import unittest
+import wave
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -41,6 +43,7 @@ class ToolTests(unittest.TestCase):
             "read_file": hercules.RiskLevel.SAFE,
             "read_binary_file": hercules.RiskLevel.SAFE,
             "read_binary_hex": hercules.RiskLevel.SAFE,
+            "read_media_file": hercules.RiskLevel.SAFE,
             "list_directory": hercules.RiskLevel.SAFE,
             "search_files": hercules.RiskLevel.SAFE,
             "get_current_time": hercules.RiskLevel.SAFE,
@@ -59,6 +62,7 @@ class ToolTests(unittest.TestCase):
             "wait_parallel_task": hercules.RiskLevel.SAFE,
             "browser_navigate": hercules.RiskLevel.SAFE,
             "browser_snapshot": hercules.RiskLevel.SAFE,
+            "browser_console": hercules.RiskLevel.SAFE,
             "browser_click": hercules.RiskLevel.SAFE,
             "browser_fill": hercules.RiskLevel.SAFE,
             "browser_scroll": hercules.RiskLevel.SAFE,
@@ -101,6 +105,91 @@ class ToolTests(unittest.TestCase):
             "(sin datos en el rango solicitado)",
         )
         self.assertIn("no puede superar", hercules.tool_read_binary_hex({"path": "sample.bin", "length": 4097}))
+
+    def test_read_media_file_attaches_optimized_image(self) -> None:
+        from PIL import Image
+
+        image_path = self.workspace / "sample.png"
+        pixels = random.Random(42).randbytes(1800 * 1800 * 3)
+        Image.frombytes("RGB", (1800, 1800), pixels).save(image_path)
+
+        result = hercules.tool_read_media_file({"path": str(image_path)})
+
+        self.assertIn("1800x1800", result.output)
+        self.assertEqual(len(result.images), 1)
+        description, data_uri = result.images[0]
+        self.assertEqual(description, "Imagen: sample.png")
+        self.assertTrue(data_uri.startswith("data:image/jpeg;base64,"))
+        image_bytes = base64.b64decode(data_uri.split(",", 1)[1])
+        self.assertLessEqual(len(image_bytes), 1024 * 1024)
+        with Image.open(io.BytesIO(image_bytes)) as attached:
+            self.assertEqual(attached.format, "JPEG")
+            self.assertLessEqual(max(attached.size), 1536)
+
+    def test_read_media_file_reports_wav_metadata_without_attaching_audio(self) -> None:
+        audio_path = self.workspace / "sample.wav"
+        with wave.open(str(audio_path), "wb") as audio_file:
+            audio_file.setnchannels(1)
+            audio_file.setsampwidth(2)
+            audio_file.setframerate(8000)
+            audio_file.writeframes(b"\0\0" * 8000)
+
+        result = hercules.tool_read_media_file({"path": str(audio_path)})
+
+        self.assertIn("00:00:01.000", result.output)
+        self.assertIn("8000 Hz", result.output)
+        self.assertIn("no se transcribió ni se adjuntó", result.output)
+        self.assertEqual(result.images, [])
+
+    def test_read_media_file_samples_video_frames_and_attaches_them(self) -> None:
+        import cv2
+        import numpy as np
+
+        class Capture:
+            def __init__(self) -> None:
+                self.frame_index = 0
+                self.seeks = []
+                self.released = False
+
+            def isOpened(self):
+                return True
+
+            def get(self, prop):
+                if prop == cv2.CAP_PROP_FRAME_COUNT:
+                    return 9
+                if prop == cv2.CAP_PROP_FPS:
+                    return 2
+                return 0
+
+            def set(self, _prop, value):
+                self.frame_index = int(value)
+                self.seeks.append(self.frame_index)
+                return True
+
+            def read(self):
+                return True, np.full((16, 16, 3), self.frame_index, dtype=np.uint8)
+
+            def release(self):
+                self.released = True
+
+        capture = Capture()
+        video_path = self.workspace / "sample.mp4"
+        video_path.write_bytes(b"mock video")
+        with patch.object(cv2, "VideoCapture", return_value=capture):
+            result = hercules.tool_read_media_file(
+                {"path": str(video_path), "max_frames": 3}
+            )
+
+        self.assertIn("3 fotogramas representativos", result.output)
+        self.assertEqual(capture.seeks, [0, 4, 8])
+        self.assertTrue(capture.released)
+        self.assertEqual(len(result.images), 3)
+        self.assertIn("00:00:02.000", result.images[1][0])
+        message = hercules._media_images_message(result.images)
+        self.assertEqual(
+            sum(part.get("type") == "image_url" for part in message["content"]),
+            3,
+        )
 
     def test_list_directory(self) -> None:
         listing = hercules.tool_list_directory({"path": "."})
@@ -156,6 +245,41 @@ class ToolTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(
             base64.b64decode(result.image_data.split(",", 1)[1]), image_bytes
+        )
+
+    def test_media_tool_attachments_are_forwarded_to_the_model(self) -> None:
+        registry = hercules.ToolsRegistry()
+        media_images = [
+            ("Fotograma 1 en 00:00:00.000", "data:image/jpeg;base64,ZmFrZQ=="),
+            ("Fotograma 2 en 00:00:01.000", "data:image/jpeg;base64,ZmFrZQ=="),
+        ]
+        registry.register(
+            hercules.ToolDefinition(
+                name="read_media_file",
+                description="Lee medios.",
+                risk=hercules.RiskLevel.SAFE,
+                parameters={"type": "object", "properties": {}},
+                runner=lambda _arguments: hercules.ToolMediaOutput(
+                    "Vídeo adjuntado como 2 fotogramas.", media_images
+                ),
+            )
+        )
+        agent = hercules.Agent(Mock(), Mock(), registry, Mock(), Mock())
+
+        with patch.object(agent, "_log"):
+            result = agent._execute_tool_call(
+                1, hercules.ToolCall("call-media", "read_media_file", {})
+            )
+
+        self.assertTrue(result.success)
+        message = hercules._media_images_message(result.media_images)
+        self.assertEqual(
+            [
+                part["image_url"]["url"]
+                for part in message["content"]
+                if part.get("type") == "image_url"
+            ],
+            [image_data for _, image_data in media_images],
         )
 
     def test_oversized_screenshot_is_compressed_under_four_megabytes(self) -> None:

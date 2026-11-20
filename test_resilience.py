@@ -582,6 +582,11 @@ def test_execute_tool_call(tmp_dir: str, workspace: str) -> None:
         "execute: mensaje de aviso para ruta inválida",
         f"output={result.output!r}",
     )
+    assert_true(
+        f"Ruta válida sugerida: {Path(workspace, 'fuera.txt')}" in result.output,
+        "execute: sugiere ruta válida dentro del workspace",
+        f"output={result.output!r}",
+    )
 
     # 5. write_file es SAFE: se ejecuta sin solicitar permiso.
     call = ga.ToolCall(
@@ -622,6 +627,11 @@ def test_execute_tool_call(tmp_dir: str, workspace: str) -> None:
     assert_true(
         "AVISO" in result.output,
         "execute: AVISO para ruta inválida",
+        f"output={result.output!r}",
+    )
+    assert_true(
+        f"Ruta válida sugerida: {Path(workspace, 'passwd')}" in result.output,
+        "execute: sugiere ruta válida para escritura",
         f"output={result.output!r}",
     )
 

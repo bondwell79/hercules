@@ -113,6 +113,28 @@ class WorkspaceWebPage(QWebEnginePage):
     def __init__(self, workspace: Path, parent: QWidget) -> None:
         super().__init__(QWebEngineProfile.defaultProfile(), parent)
         self.workspace = workspace.resolve()
+        self._console_messages: deque[tuple[str, str, int, str]] = deque(maxlen=500)
+
+    def javaScriptConsoleMessage(
+        self,
+        level: QWebEnginePage.JavaScriptConsoleMessageLevel,
+        message: str,
+        line_number: int,
+        source_id: str,
+    ) -> None:
+        levels = {
+            QWebEnginePage.JavaScriptConsoleMessageLevel.InfoMessageLevel: "INFO",
+            QWebEnginePage.JavaScriptConsoleMessageLevel.WarningMessageLevel: "WARNING",
+            QWebEnginePage.JavaScriptConsoleMessageLevel.ErrorMessageLevel: "ERROR",
+        }
+        self._console_messages.append(
+            (levels.get(level, "UNKNOWN"), message, line_number, source_id)
+        )
+
+    def take_console_messages(self) -> list[tuple[str, str, int, str]]:
+        messages = list(self._console_messages)
+        self._console_messages.clear()
+        return messages
 
     def acceptNavigationRequest(
         self,
@@ -183,6 +205,9 @@ class BrowserToolBridge(QObject):
                 return
             elif action == "snapshot":
                 self._snapshot(completed, response)
+                return
+            elif action == "console":
+                self._console(completed, response)
                 return
             elif action in {"click", "fill", "press_key"}:
                 self._interact(action, arguments, completed, response)
@@ -285,6 +310,35 @@ class BrowserToolBridge(QObject):
             self._finish(completed, response, text)
 
         self.dashboard.web_view.page().runJavaScript(script, _received)
+
+    def _console(
+        self,
+        completed: threading.Event,
+        response: Dict[str, str],
+    ) -> None:
+        page = self.dashboard.web_view.page()
+        messages = page.take_console_messages()
+        if not messages:
+            self._finish(completed, response, "No hay mensajes de consola pendientes.")
+            return
+
+        header = "Mensajes de consola del navegador:\n"
+        lines = []
+        size = len(header)
+        for level, message, line_number, source_id in reversed(messages):
+            line = f"[{level}] {source_id}:{line_number}: {message}"
+            if len(line) > 2000:
+                line = line[:1997] + "..."
+            if size + len(line) + 1 > 19872:
+                break
+            lines.append(line)
+            size += len(line) + 1
+        lines.reverse()
+        omitted = len(messages) - len(lines)
+        if omitted:
+            header += f"[{omitted} mensaje(s) omitido(s) por límite de salida]\n"
+        result = header + "\n".join(lines)
+        self._finish(completed, response, result)
 
     def _interact(
         self,
@@ -1017,6 +1071,7 @@ class QtDashboard(QMainWindow):
         definitions = [
             ("browser_navigate", "Navega en el navegador integrado a una URL HTTP(S) o documento local del workspace.", {"url": {"type": "string", "description": "URL HTTP(S) o file:// dentro del workspace."}}, ["url"], "navigate"),
             ("browser_snapshot", "Devuelve URL, título, texto y controles interactivos visibles. Asigna referencias como @e1; usa esas referencias con browser_click(ref=\"e1\") o browser_fill(ref=\"e2\", text=...). Las referencias caducan tras navegar, interactuar o tomar otro snapshot.", {}, [], "snapshot"),
+            ("browser_console", "Devuelve los mensajes de consola JavaScript generados por el navegador integrado desde la última consulta.", {}, [], "console"),
             ("browser_click", "Hace clic en un control usando la referencia devuelta por browser_snapshot; también admite selector CSS para compatibilidad.", {"ref": {"type": "string", "description": "Referencia del snapshot, por ejemplo e3 o @e3."}, "selector": {"type": "string", "description": "Selector CSS opcional para compatibilidad."}}, [], "click"),
             ("browser_fill", "Rellena un campo usando la referencia devuelta por browser_snapshot; también admite selector CSS.", {"ref": {"type": "string", "description": "Referencia del snapshot, por ejemplo e2 o @e2."}, "selector": {"type": "string", "description": "Selector CSS opcional para compatibilidad."}, "text": {"type": "string", "description": "Texto que se escribirá."}}, ["text"], "fill"),
             (

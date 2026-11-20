@@ -132,7 +132,7 @@ class QtDashboardLayoutTests(unittest.TestCase):
         expected = {
             "browser_navigate", "browser_snapshot", "browser_click", "browser_fill",
             "browser_scroll", "browser_press_key", "browser_screenshot", "browser_back",
-            "browser_forward", "browser_reload",
+            "browser_forward", "browser_reload", "browser_console",
         }
         self.assertEqual(set(registry.tools) - {"read_file"}, expected)
         self.assertIs(registry.tools["read_file"], existing_tool)
@@ -165,6 +165,35 @@ class QtDashboardLayoutTests(unittest.TestCase):
         self.assertIn("@e1 button Enviar", response["result"])
         self.assertIn("@e2 input text Correo", response["result"])
         self.assertEqual(bridge._active_refs, {"e1", "e2"})
+
+    def test_browser_console_returns_and_clears_captured_messages(self):
+        page = self.window.web_view.page()
+        page.javaScriptConsoleMessage(
+            QWebEnginePage.JavaScriptConsoleMessageLevel.ErrorMessageLevel,
+            "falló la aplicación",
+            12,
+            "https://example.test/app.js",
+        )
+        bridge = BrowserToolBridge(self.window)
+        completed = threading.Event()
+        response = {}
+        bridge._execute(("console", {}, completed, response))
+
+        self.assertTrue(completed.is_set())
+        self.assertIn(
+            "[ERROR] https://example.test/app.js:12: falló la aplicación",
+            response["result"],
+        )
+        self.assertEqual(page.take_console_messages(), [])
+
+    def test_browser_console_reports_when_no_messages_are_pending(self):
+        bridge = BrowserToolBridge(self.window)
+        completed = threading.Event()
+        response = {}
+        bridge._execute(("console", {}, completed, response))
+
+        self.assertTrue(completed.is_set())
+        self.assertEqual(response["result"], "No hay mensajes de consola pendientes.")
 
     def test_browser_snapshot_parses_serialized_javascript_result(self):
         bridge = BrowserToolBridge(self.window)
