@@ -11,6 +11,8 @@
 ..................................................................
 ```
 
+Versión actual: 2.0
+
 > Gestor agéntico de modelos LLM con control de permisos humano-en-el-bucle (HITL). El motor usa la biblioteca estándar de Python; la interfaz gráfica utiliza PySide6.
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
@@ -92,12 +94,26 @@ al workspace.
 - Opcional: `llama-cpp-python` (solo para modo local)
 - Opcional: un modelo GGUF (ver carpeta `modelos/`)
 
+## 📦 Modelos LLM recomendados (de menor a mayor)
+
+Tras diferentes pruebas exhaustivas, recomendamos los siguientes modelos multimodales en entorno local:
+
+- Ornith 1.5 35B Q8. Este modelo Q8 es capaz de utilizar todas las herramientas disponibles con una mayor solvencia y estabilidad, y la consideramos la mejor opción local.
+- Qwen 3.6 35B A3B / 3.8 35B A3B. Ambos modelos utilizan con solvencia la totalidad de las herramientas.
+- Gemma 4 26B A4B. Este modelo utiliza casi la totalidad de las herramientas y destaca en visión y escritura.
+
+En entorno cloud, casi la totalidad de modelos multimodales son capaces de hacer uso completo de herramientas y capacidades avanzadas de desarrollo, y destacan:
+
+- Minimax m2.5 / m3. 
+- Qwen 3.8 Flash.
+- Modelos Openai compatibles frontera.
+
 ## 🚀 Instalación rápida
 
 ```bash
 git clone https://github.com/bondwell79/hercules.git
 cd hercules
-python -m pip install PySide6==6.12.0 PySide6-WebEngine==6.12.0.140
+pip install -R requirements.txt
 python hercules.py
 ```
 
