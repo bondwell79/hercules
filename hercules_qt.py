@@ -1767,17 +1767,18 @@ class QtDashboard(QMainWindow):
             if first_line.startswith(prefix):
                 tool_name = first_line[len(prefix):].strip()
                 if tool_name:
-                    return f"{prefix}{tool_name}\nArgumentos ocultos"
-            return "Contenido de llamada a herramienta oculto"
+                    return f"{prefix}{tool_name}\n..."
+            return "..."
 
         if event_type == self.core.EventType.TOOL_RESULT.value:
             if first_line.startswith("[") and first_line.endswith("] OK"):
-                return f"{first_line}\nSalida de herramienta oculta"
-            return "Salida de herramienta oculta"
+                return f"{first_line}\n..."
+            return "..."
 
         if event_type == self.core.EventType.INFO.value:
             if first_line.startswith("[") and first_line.endswith("] AVISO"):
-                return f"{first_line}\nDetalle del aviso oculto"
+                return f"{first_line}\n..."
+
 
         return content
 
