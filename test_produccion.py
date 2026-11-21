@@ -16,6 +16,7 @@ import http.server
 import json
 import os
 import queue
+import socket
 import sys
 import tempfile
 import threading
@@ -144,6 +145,83 @@ class _ScriptedLLM:
         }
 
 
+class WorkspaceHTTPServerLifecycleTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.workspace = Path(self.tmp.name).resolve()
+        self.workspace_patch = patch.object(ga, "WORKSPACE_DIR", self.workspace)
+        self.workspace_patch.start()
+        self.addCleanup(self.workspace_patch.stop)
+        self.db = ga.Database(db_path=str(self.workspace / "tasks.db"))
+        self.ui_queue: queue.Queue = queue.Queue()
+        self.permissions = ga.PermissionManager(self.ui_queue)
+
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            self.port = sock.getsockname()[1]
+        self.port_patch = patch.object(ga.WorkspaceHTTPServer, "PORT", self.port)
+        self.port_patch.start()
+        self.addCleanup(self.port_patch.stop)
+
+    def make_agent(self, llm) -> ga.Agent:
+        return ga.Agent(
+            self.db,
+            llm,
+            ga.ToolsRegistry(),
+            self.permissions,
+            self.ui_queue,
+        )
+
+    def assert_server_stopped(self) -> None:
+        with socket.socket() as sock:
+            with self.assertRaises(OSError):
+                sock.connect(("127.0.0.1", self.port))
+
+    def test_server_stops_after_final_answer(self) -> None:
+        llm = _ScriptedLLM(
+            [
+                _ScriptedLLM.tool_call(ga.HTTP_SERVER_TOOL, {}),
+                _ScriptedLLM.tool_call(ga.HTTP_SERVER_TOOL, {}, call_id="c2"),
+                _ScriptedLLM._final("Terminado"),
+            ]
+        )
+        agent = self.make_agent(llm)
+        task = self.db.create_task("servidor", "prueba")
+
+        agent.run(task)
+
+        self.assertEqual(self.db.get_task(task.id).status, ga.TaskStatus.COMPLETED)
+        history = self.db.get_history(task.id)
+        self.assertTrue(
+            any("ya se encuentra activo" in entry.content for entry in history)
+        )
+        self.assert_server_stopped()
+
+    def test_server_stops_when_task_is_aborted(self) -> None:
+        cancel_event = threading.Event()
+
+        class CancelOnSecondCall(_ScriptedLLM):
+            def chat(self, *args, **kwargs):
+                if self.calls:
+                    cancel_event.set()
+                return super().chat(*args, **kwargs)
+
+        llm = CancelOnSecondCall(
+            [
+                _ScriptedLLM.tool_call(ga.HTTP_SERVER_TOOL, {}),
+                _ScriptedLLM._final("Respuesta que no debe completarse"),
+            ]
+        )
+        agent = self.make_agent(llm)
+        task = self.db.create_task("servidor", "abortar")
+
+        agent.run(task, cancel_event=cancel_event)
+
+        self.assertEqual(self.db.get_task(task.id).status, ga.TaskStatus.CANCELLED)
+        self.assert_server_stopped()
+
+
 class _Base(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -245,6 +323,9 @@ class OrchestratorFailureTests(_Base):
             def run(self, task, cancel_event=None):
                 raise RuntimeError("boom")
 
+            def _release_http_server(self, task_id):
+                pass
+
         plan = [("ETAPA_1", "haz {user_prompt}"), ("ETAPA_2", "luego")]
         orch = ga.TaskOrchestrator(self.db, Exploding(), self.ui_queue)
         parent = self.db.create_task("padre", "prompt")
@@ -264,6 +345,9 @@ class OrchestratorFailureTests(_Base):
             def run(inner, task, cancel_event=None):
                 seen.append(inner.db.get_task(task.parent_task_id).status)
                 inner.db.update_task_status(task.id, ga.TaskStatus.COMPLETED, final_answer="ok")
+
+            def _release_http_server(inner, task_id):
+                pass
 
         orch = ga.TaskOrchestrator(self.db, Recorder(self.db), self.ui_queue)
         parent = self.db.create_task("padre", "prompt")

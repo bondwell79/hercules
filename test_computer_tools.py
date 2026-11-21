@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import base64
+import http.client
 import io
 import os
 import random
+import socket
 import sys
 import tempfile
 import time
@@ -60,6 +62,7 @@ class ToolTests(unittest.TestCase):
             "delete_file": hercules.RiskLevel.SAFE,
             "spawn_parallel_task": hercules.RiskLevel.SAFE,
             "wait_parallel_task": hercules.RiskLevel.SAFE,
+            "run_http_server": hercules.RiskLevel.SAFE,
             "browser_navigate": hercules.RiskLevel.SAFE,
             "browser_snapshot": hercules.RiskLevel.SAFE,
             "browser_console": hercules.RiskLevel.SAFE,
@@ -83,6 +86,59 @@ class ToolTests(unittest.TestCase):
             with self.subTest(tool=name):
                 self.assertEqual(tools[name].risk, expected_risk)
                 self.assertTrue(callable(tools[name].runner))
+        self.assertEqual(
+            tools["run_http_server"].parameters["properties"],
+            {},
+        )
+        self.assertFalse(
+            tools["run_http_server"].parameters["additionalProperties"]
+        )
+
+    def test_workspace_http_server_is_shared_until_its_last_task_finishes(self) -> None:
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+
+        with patch.object(hercules.WorkspaceHTTPServer, "PORT", port):
+            server = hercules.WorkspaceHTTPServer(self.workspace)
+            self.addCleanup(server.release_task, 1)
+            self.addCleanup(server.release_task, 2)
+            self.addCleanup(server.release_task, 3)
+            self.assertTrue(server.start_for_task(1))
+
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+            connection.request("GET", "/sample.txt")
+            response = connection.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(
+                response.read().replace(b"\r\n", b"\n"),
+                b"alpha\nbeta alpha\n",
+            )
+            connection.close()
+
+            self.assertFalse(server.start_for_task(1))
+            self.assertFalse(server.start_for_task(2, root_task_id=1))
+            server.release_task(2)
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+            connection.request("GET", "/sample.txt")
+            self.assertEqual(connection.getresponse().status, 200)
+            connection.close()
+
+            self.assertFalse(server.start_for_task(3, root_task_id=1))
+            server.release_task(1)
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+            connection.request("GET", "/sample.txt")
+            self.assertEqual(connection.getresponse().status, 200)
+            connection.close()
+
+            server.release_task(3)
+            with self.assertRaises(OSError):
+                connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+                try:
+                    connection.request("GET", "/sample.txt")
+                    connection.getresponse()
+                finally:
+                    connection.close()
 
     def test_read_file(self) -> None:
         self.assertEqual(hercules.tool_read_file({"path": "sample.txt"}), "alpha\nbeta alpha\n")

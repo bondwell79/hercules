@@ -56,6 +56,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tuple
 
 import concurrent.futures
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 import computer_tools
 
@@ -3078,6 +3080,89 @@ def tool_wait_parallel_task(args: Dict[str, Any]) -> str:
     return "ERROR: wait_parallel_task solo puede ejecutarse desde el bucle del agente."
 
 
+HTTP_SERVER_TOOL = "run_http_server"
+
+
+def tool_run_http_server(args: Dict[str, Any]) -> str:
+    """Marcador: la ejecución real la resuelve ``Agent``."""
+    return "ERROR: run_http_server solo puede ejecutarse desde el bucle del agente."
+
+
+class _WorkspaceRequestHandler(SimpleHTTPRequestHandler):
+    def log_message(self, format: str, *args: Any) -> None:
+        _LOGGER.debug("HTTP %s - %s", self.address_string(), format % args)
+
+
+class WorkspaceHTTPServer:
+    HOST = "127.0.0.1"
+    PORT = 8000
+
+    def __init__(self, workspace: Path) -> None:
+        self.workspace = workspace.resolve()
+        self._lock = threading.Lock()
+        self._server: Optional[ThreadingHTTPServer] = None
+        self._thread: Optional[threading.Thread] = None
+        self._task_owners: set[int] = set()
+
+    @property
+    def url(self) -> str:
+        return f"http://{self.HOST}:{self.PORT}/"
+
+    def start_for_task(
+        self,
+        task_id: int,
+        root_task_id: Optional[int] = None,
+    ) -> bool:
+        """Inicia el servidor si hace falta y registra la tarea como usuaria."""
+        with self._lock:
+            if self._server is not None:
+                self._task_owners.add(task_id)
+                if root_task_id is not None:
+                    self._task_owners.add(root_task_id)
+                return False
+
+            handler = partial(
+                _WorkspaceRequestHandler,
+                directory=str(self.workspace),
+            )
+            server = ThreadingHTTPServer((self.HOST, self.PORT), handler)
+            thread = threading.Thread(
+                target=server.serve_forever,
+                name="workspace-http-server",
+                daemon=True,
+            )
+            try:
+                thread.start()
+            except Exception:
+                server.server_close()
+                raise
+
+            self._server = server
+            self._thread = thread
+            self._task_owners.add(task_id)
+            if root_task_id is not None:
+                self._task_owners.add(root_task_id)
+            return True
+
+    def release_task(self, task_id: int) -> None:
+        """Detiene el servidor cuando ninguna tarea raíz lo mantiene activo."""
+        with self._lock:
+            self._task_owners.discard(task_id)
+            if self._task_owners or self._server is None:
+                return
+
+            server = self._server
+            thread = self._thread
+            self._server = None
+            self._thread = None
+            try:
+                server.shutdown()
+            finally:
+                server.server_close()
+                if thread is not None:
+                    thread.join()
+
+
 class ToolsRegistry:
     """Registro central de herramientas disponibles para el agente."""
 
@@ -3559,6 +3644,26 @@ class ToolsRegistry:
                     "required": ["task_id"],
                 },
                 runner=tool_wait_parallel_task,
+            )
+        )
+        self.register(
+            ToolDefinition(
+                name=HTTP_SERVER_TOOL,
+                description=(
+                    "Inicia un servidor HTTP local de solo lectura para probar el "
+                    "contenido del workspace. No recibe argumentos: sirve "
+                    "WORKSPACE_DIR en http://127.0.0.1:8000/. Si ya está activo, "
+                    "informa de que sigue disponible. El servidor permanece activo "
+                    "hasta que termine la tarea completa y sus resultados paralelos, "
+                    "o hasta que se aborte."
+                ),
+                risk=RiskLevel.SAFE,
+                parameters={
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+                runner=tool_run_http_server,
             )
         )
 
@@ -4072,6 +4177,7 @@ class Agent:
         self.permissions = permissions
         self.ui_queue = ui_queue
         self.parallel = ParallelTaskManager(self)
+        self.http_server = WorkspaceHTTPServer(WORKSPACE_DIR)
 
     # --- Tareas paralelas ---
 
@@ -4122,6 +4228,19 @@ class Agent:
             )
         result = child.final_answer or "(sin resultado)"
         return f"#{child.id} {child.subtask_name} [{child.status.value}]\n{result}"
+
+    def _run_http_server(self, task_id: int) -> str:
+        root_id = self.parallel._root_id(task_id)
+        started = self.http_server.start_for_task(task_id, root_id)
+        if started:
+            return f"Servidor HTTP iniciado para el workspace en {self.http_server.url}"
+        return (
+            f"El servidor HTTP ya se encuentra activo escuchando en "
+            f"{self.http_server.url}"
+        )
+
+    def _release_http_server(self, task_id: int) -> None:
+        self.http_server.release_task(task_id)
 
     def _claim_file_access(self, task_id: int, tool_name: str, arguments: Dict[str, Any]) -> Optional[str]:
         """Devuelve un aviso si otra tarea paralela ya ha modificado ese fichero."""
@@ -4431,6 +4550,8 @@ class Agent:
                 output = self._spawn_parallel(task_id, call.arguments, cancel_event)
             elif tool.name == WAIT_PARALLEL_TOOL:
                 output = self._wait_parallel(task_id, call.arguments, cancel_event)
+            elif tool.name == HTTP_SERVER_TOOL:
+                output = self._run_http_server(task_id)
             else:
                 conflict = self._claim_file_access(task_id, tool.name, call.arguments)
                 tool_output = (
@@ -4931,6 +5052,7 @@ class Agent:
             # Si la tarea acaba sin respuesta final (fallo, cancelación...),
             # las tareas paralelas que sigan activas se cancelan.
             self.parallel.release(task_id)
+            self._release_http_server(task_id)
 
 
 # ============================================================================
@@ -5011,6 +5133,8 @@ class TaskOrchestrator:
         except Exception as exc:  # noqa: BLE001
             _LOGGER.exception("Error inesperado orquestando la tarea %s", parent_task.id)
             self._abort_after_error(parent_task.id, exc)
+        finally:
+            self.agent._release_http_server(parent_task.id)
 
     def _abort_after_error(self, parent_id: int, exc: BaseException) -> None:
         """Marca como FAILED el padre y las subtareas sin terminar tras un error."""
