@@ -80,6 +80,19 @@ class QtDashboardLayoutTests(unittest.TestCase):
         self.window.close()
         self.workspace_dir.cleanup()
 
+    def test_file_mutations_do_not_show_files_in_browser(self):
+        self.assertFalse(hasattr(self.window, "_show_changed_file"))
+
+        source_path = Path(hercules.__file__)
+        source = source_path.read_text(encoding="utf-8")
+        self.assertNotIn('"type": "show_file"', source)
+        self.assertNotIn(
+            'tc.name in {"create_file", "edit_file", "write_file"}',
+            source,
+        )
+        for tool_name in ("create_file", "write_file", "edit_file"):
+            self.assertIn(tool_name, source)
+
     def test_dashboard_uses_requested_two_column_layout(self):
         columns = self.window.centralWidget()
         self.assertIsInstance(columns, QSplitter)

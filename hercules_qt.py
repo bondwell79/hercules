@@ -1943,8 +1943,6 @@ class QtDashboard(QMainWindow):
             self._show_approval(event)
         elif event_type == "preauth_result":
             self._finish_preauthorization(event)
-        elif event_type == "show_file":
-            self._show_changed_file(str(event.get("path", "")))
         elif event_type == "terminal_command":
             self._activate_terminal()
             terminal_path = str(self.workspace).replace("\\", "/")
@@ -2082,24 +2080,6 @@ class QtDashboard(QMainWindow):
         )
         self._approval_dialog_open = False
         QTimer.singleShot(0, self._show_next_approval)
-
-    def _show_changed_file(self, raw_path: str) -> None:
-        if not raw_path:
-            return
-        path = Path(raw_path)
-        if not path.is_absolute():
-            path = self.workspace / path
-        path = path.resolve()
-        if not _is_within_workspace(path, self.workspace) or not path.is_file():
-            return
-        self.workspace_tabs.setCurrentIndex(
-            self.workspace_tabs.indexOf(self.web_view.parentWidget())
-        )
-        url = QUrl.fromLocalFile(str(path))
-        if self.web_view.url() == url:
-            self.web_view.reload()
-        else:
-            self.web_view.setUrl(url)
 
     def _show_workspace_in_browser(self) -> None:
         browser_index = self.workspace_tabs.indexOf(self.web_view.parentWidget())

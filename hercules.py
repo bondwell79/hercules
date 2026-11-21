@@ -5012,15 +5012,6 @@ class Agent:
                         image_messages.append(
                             _media_images_message(result.media_images)
                         )
-                    if tc.name in {"create_file", "edit_file", "write_file"} and result.success:
-                        self.ui_queue.put(
-                            {
-                                "type": "show_file",
-                                "task_id": task_id,
-                                "path": str(tc.arguments.get("path", "")),
-                            }
-                        )
-
                 messages.extend(image_messages)
 
                 # Publicar uso de contexto tras procesar las herramientas
