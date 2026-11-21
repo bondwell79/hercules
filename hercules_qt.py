@@ -1751,10 +1751,35 @@ class QtDashboard(QMainWindow):
             text_format.setFontWeight(
                 QFont.Weight.Bold if bold else QFont.Weight.Normal
             )
+            content = self._history_content_for_display(entry)
             cursor.insertText(
-                f"[{entry.timestamp}] {label}\n{entry.content}\n\n",
+                f"[{entry.timestamp}] {label}\n{content}\n\n",
                 text_format,
             )
+
+    def _history_content_for_display(self, entry: Any) -> str:
+        event_type = getattr(entry.event_type, "value", entry.event_type)
+        content = str(entry.content)
+        first_line = content.partition("\n")[0]
+
+        if event_type == self.core.EventType.TOOL_CALL.value:
+            prefix = "Llamada a herramienta: "
+            if first_line.startswith(prefix):
+                tool_name = first_line[len(prefix):].strip()
+                if tool_name:
+                    return f"{prefix}{tool_name}\nArgumentos ocultos"
+            return "Contenido de llamada a herramienta oculto"
+
+        if event_type == self.core.EventType.TOOL_RESULT.value:
+            if first_line.startswith("[") and first_line.endswith("] OK"):
+                return f"{first_line}\nSalida de herramienta oculta"
+            return "Salida de herramienta oculta"
+
+        if event_type == self.core.EventType.INFO.value:
+            if first_line.startswith("[") and first_line.endswith("] AVISO"):
+                return f"{first_line}\nDetalle del aviso oculto"
+
+        return content
 
     def _is_command_execution_history_entry(self, entry: Any) -> bool:
         event_type = getattr(entry.event_type, "value", entry.event_type)

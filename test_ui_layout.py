@@ -671,6 +671,59 @@ class QtDashboardLayoutTests(unittest.TestCase):
             self.window.config.ui_final_answer_fg,
         )
 
+    def test_history_hides_tool_payloads_but_keeps_model_thoughts(self):
+        events = [
+            types.SimpleNamespace(
+                id=1,
+                event_type=hercules.EventType.THOUGHT,
+                timestamp="2026-10-15 12:00:00",
+                content="El modelo explica su plan.",
+            ),
+            types.SimpleNamespace(
+                id=2,
+                event_type=hercules.EventType.TOOL_CALL,
+                timestamp="2026-10-15 12:00:01",
+                content=(
+                    'Llamada a herramienta: read_file\n'
+                    'Argumentos: {"path": "secreto.txt"}'
+                ),
+            ),
+            types.SimpleNamespace(
+                id=3,
+                event_type=hercules.EventType.TOOL_RESULT,
+                timestamp="2026-10-15 12:00:02",
+                content="[read_file] OK\nContenido privado del archivo",
+            ),
+            types.SimpleNamespace(
+                id=4,
+                event_type=hercules.EventType.INFO,
+                timestamp="2026-10-15 12:00:03",
+                content="[browser_console] AVISO\nDetalle técnico privado",
+            ),
+        ]
+        task = types.SimpleNamespace(
+            id=1,
+            title="Tarea de prueba",
+            status=types.SimpleNamespace(value="COMPLETED"),
+            parent_task_id=None,
+        )
+        self.window.db.get_task = lambda _task_id: task
+        self.window.db.get_history = lambda _task_id: events
+
+        self.window._select_task(1)
+
+        text = self.window.history_view.toPlainText()
+        self.assertIn("El modelo explica su plan.", text)
+        self.assertIn("Llamada a herramienta: read_file", text)
+        self.assertIn("[read_file] OK", text)
+        self.assertIn("[browser_console] AVISO", text)
+        self.assertIn("Argumentos ocultos", text)
+        self.assertIn("Salida de herramienta oculta", text)
+        self.assertIn("Detalle del aviso oculto", text)
+        self.assertNotIn("secreto.txt", text)
+        self.assertNotIn("Contenido privado del archivo", text)
+        self.assertNotIn("Detalle técnico privado", text)
+
     def test_command_execution_history_is_filtered(self):
         command_call = types.SimpleNamespace(
             event_type=hercules.EventType.TOOL_CALL,
