@@ -140,6 +140,8 @@ class QtDashboardLayoutTests(unittest.TestCase):
         self.assertIsNotNone(self.window._browser_tool_bridge)
         for name in expected:
             self.assertEqual(registry.tools[name].risk, hercules.RiskLevel.SAFE)
+        self.assertIn("code", registry.tools["browser_console"].parameters["properties"])
+        self.assertEqual(registry.tools["browser_console"].parameters["required"], [])
 
     def test_browser_snapshot_assigns_interactive_refs(self):
         bridge = BrowserToolBridge(self.window)
@@ -195,6 +197,57 @@ class QtDashboardLayoutTests(unittest.TestCase):
 
         self.assertTrue(completed.is_set())
         self.assertEqual(response["result"], "No hay mensajes de consola pendientes.")
+
+    def test_browser_console_executes_code_on_loopback_page(self):
+        bridge = BrowserToolBridge(self.window)
+        executed = []
+        page = types.SimpleNamespace(
+            url=lambda: QUrl("http://127.0.0.1:8000/"),
+            take_console_messages=lambda: [],
+            runJavaScript=lambda code, callback: (
+                executed.append(code),
+                callback({"title": "demo"}),
+            ),
+        )
+        bridge.dashboard = types.SimpleNamespace(
+            workspace_tabs=types.SimpleNamespace(indexOf=lambda _widget: -1),
+            web_view=types.SimpleNamespace(
+                page=lambda: page,
+                parentWidget=lambda: object(),
+            ),
+        )
+        completed = threading.Event()
+        response = {}
+
+        bridge._execute(("console", {"code": "document.title"}, completed, response))
+
+        self.assertTrue(completed.is_set())
+        self.assertEqual(executed, ["document.title"])
+        self.assertEqual(response["result"], 'Resultado JavaScript: {"title": "demo"}')
+
+    def test_browser_console_rejects_code_on_non_loopback_page(self):
+        bridge = BrowserToolBridge(self.window)
+        executed = []
+        page = types.SimpleNamespace(
+            url=lambda: QUrl("https://example.test/"),
+            take_console_messages=lambda: [],
+            runJavaScript=lambda code, callback: executed.append(code),
+        )
+        bridge.dashboard = types.SimpleNamespace(
+            workspace_tabs=types.SimpleNamespace(indexOf=lambda _widget: -1),
+            web_view=types.SimpleNamespace(
+                page=lambda: page,
+                parentWidget=lambda: object(),
+            ),
+        )
+        completed = threading.Event()
+        response = {}
+
+        bridge._execute(("console", {"code": "document.title"}, completed, response))
+
+        self.assertTrue(completed.is_set())
+        self.assertEqual(executed, [])
+        self.assertIn("127.0.0.1", response["result"])
 
     def test_browser_snapshot_parses_serialized_javascript_result(self):
         bridge = BrowserToolBridge(self.window)

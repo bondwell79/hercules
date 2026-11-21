@@ -219,7 +219,7 @@ class BrowserToolBridge(QObject):
                 self._snapshot(completed, response)
                 return
             elif action == "console":
-                self._console(completed, response)
+                self._console(arguments, completed, response)
                 return
             elif action in {"click", "fill", "press_key"}:
                 self._interact(action, arguments, completed, response)
@@ -228,6 +228,7 @@ class BrowserToolBridge(QObject):
                 raise ValueError(f"Acción de navegador desconocida: {action}")
         except Exception as exc:
             response["result"] = f"ERROR: {exc}"
+            completed.set()
         completed.set()
 
     def _navigate(
@@ -325,10 +326,52 @@ class BrowserToolBridge(QObject):
 
     def _console(
         self,
+        arguments: Dict[str, Any],
         completed: threading.Event,
         response: Dict[str, str],
     ) -> None:
         page = self.dashboard.web_view.page()
+        if "code" in arguments:
+            code = arguments["code"]
+            if not isinstance(code, str) or not code.strip():
+                raise ValueError("code debe ser una cadena JavaScript no vacía")
+            url = page.url()
+
+            scheme = url.scheme().lower()
+            host = url.host().lower()
+            is_loopback_http = (
+                scheme in {"http", "https"}
+                and host in {"127.0.0.1", "localhost", "::1"}
+            )
+            is_workspace_file = False
+            if scheme == "file":
+                try:
+                    local_path = Path(url.toLocalFile()).resolve()
+                    is_workspace_file = _is_within_workspace(
+                        local_path,
+                        self.dashboard.workspace,
+                    )
+                except (OSError, RuntimeError):
+                    is_workspace_file = False
+            if not is_loopback_http and not is_workspace_file:
+                raise ValueError(
+                    "La inyección de JavaScript solo está permitida en páginas "
+                    "HTTP(S) loopback (127.0.0.1/localhost) o file:// del workspace"
+                )
+
+            self._invalidate_refs()
+
+            def _evaluated(result: Any) -> None:
+                rendered = (
+                    "(sin valor de retorno)"
+                    if result is None
+                    else json.dumps(result, ensure_ascii=False, default=str)
+                )
+                self._finish(completed, response, f"Resultado JavaScript: {rendered}")
+
+            page.runJavaScript(code, _evaluated)
+            return
+
         messages = page.take_console_messages()
         if not messages:
             self._finish(completed, response, "No hay mensajes de consola pendientes.")
@@ -1180,7 +1223,20 @@ class QtDashboard(QMainWindow):
         definitions = [
             ("browser_navigate", "Navega en el navegador integrado a una URL HTTP(S) o documento local del workspace.", {"url": {"type": "string", "description": "URL HTTP(S) o file:// dentro del workspace."}}, ["url"], "navigate"),
             ("browser_snapshot", "Devuelve URL, título, texto y controles interactivos visibles. Asigna referencias como @e1; usa esas referencias con browser_click(ref=\"e1\") o browser_fill(ref=\"e2\", text=...). Las referencias caducan tras navegar, interactuar o tomar otro snapshot.", {}, [], "snapshot"),
-            ("browser_console", "Devuelve los mensajes de consola JavaScript generados por el navegador integrado desde la última consulta.", {}, [], "console"),
+            (
+                "browser_console",
+                "Sin argumentos, devuelve los mensajes de consola JavaScript pendientes. "
+                "Con code, ejecuta JavaScript en la página mostrada y devuelve su resultado; "
+                "la ejecución se permite solo en HTTP(S) loopback o file:// dentro del workspace.",
+                {
+                    "code": {
+                        "type": "string",
+                        "description": "Código JavaScript a ejecutar en la página actual.",
+                    }
+                },
+                [],
+                "console",
+            ),
             ("browser_click", "Hace clic en un control usando la referencia devuelta por browser_snapshot; también admite selector CSS para compatibilidad.", {"ref": {"type": "string", "description": "Referencia del snapshot, por ejemplo e3 o @e3."}, "selector": {"type": "string", "description": "Selector CSS opcional para compatibilidad."}}, [], "click"),
             ("browser_fill", "Rellena un campo usando la referencia devuelta por browser_snapshot; también admite selector CSS.", {"ref": {"type": "string", "description": "Referencia del snapshot, por ejemplo e2 o @e2."}, "selector": {"type": "string", "description": "Selector CSS opcional para compatibilidad."}, "text": {"type": "string", "description": "Texto que se escribirá."}}, ["text"], "fill"),
             (

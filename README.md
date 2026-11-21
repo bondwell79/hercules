@@ -22,7 +22,13 @@ Versión actual: 2.0
 
 ## ✨ Características
 
-- 🤖 **Agente** con bucle de razonamiento y herramientas.
+- 🤖 **Agente autónomo** con bucle ReAct, detección de bucles y compactación de contexto.
+- 🧩 **Flujo configurable por subtareas** definido mediante `subtareas.ini`.
+- ⚡ **Tareas paralelas** con límite configurable y espera/cancelación controlada.
+- 🖱️ **Control humano HITL** para herramientas con autorización, preautorización y cancelación.
+- 🌐 **Navegador integrado** con snapshot, controles interactivos y consola JavaScript.
+- 🪟 **Interfaz Qt moderna** adaptable, con temas, terminal integrado y barra de título nativa en Windows.
+- 🛡️ **Arranque y ejecución robustos** ante configuración inválida, errores de contexto, LLM bloqueado y fallos de tareas.
 
 # Herramientas disponibles
 
@@ -47,16 +53,22 @@ Versión actual: 2.0
 | Herramienta | Descripción |
 |---|---|
 | `browser_navigate` | Navega a una URL HTTP(S) o documento local |
-| `browser_snapshot` | Devuelve URL, título, texto y controles interactivos |
-| `browser_console` | Devuelve mensajes de consola JavaScript pendientes |
-| `browser_click` | Hace clic en un control (por referencia) |
-| `browser_fill` | Rellena un campo de formulario |
+| `browser_snapshot` | Devuelve URL, título, texto y controles interactivos, asignando referencias `@e1`, `@e2`, etc. |
+| `browser_console` | Sin argumentos, devuelve los mensajes de consola pendientes; con `code`, ejecuta JavaScript en la página cargada y devuelve su resultado |
+| `browser_click` | Hace clic en un control usando una referencia del último snapshot o, por compatibilidad, un selector CSS |
+| `browser_fill` | Rellena un campo usando una referencia del último snapshot o, por compatibilidad, un selector CSS |
 | `browser_scroll` | Desplaza la página |
 | `browser_press_key` | Envía una tecla nativa al navegador |
 | `browser_screenshot` | Captura el navegador y adjunta la imagen |
 | `browser_back` | Retrocede en el historial |
 | `browser_forward` | Avanza en el historial |
 | `browser_reload` | Recarga la página |
+
+Las referencias del snapshot caducan al navegar, desplazarse o interactuar, y tras tomar
+otro snapshot. Solicita siempre un nuevo `browser_snapshot` para obtener referencias vigentes.
+La opción `code` de `browser_console` permite inyectar y evaluar código JavaScript directamente
+en el documento mostrado por el navegador integrado, lo que facilita pruebas DOM, lectura de
+valores y depuración. Ejecuta código únicamente en páginas de confianza.
 
 ## ⌨️ Interacción con el escritorio
 
@@ -73,9 +85,14 @@ Versión actual: 2.0
 | Herramienta | Descripción |
 |---|---|
 | `execute_command` | Ejecuta un comando del sistema |
-| `spawn_parallel_task` | Lanza una tarea en paralelo (segundo plano) |
-| `wait_parallel_task` | Espera a que termine una tarea paralela |
+| `spawn_parallel_task` | Lanza una tarea hija autónoma en segundo plano; admite hasta `max_parallel_tasks` simultáneas |
+| `wait_parallel_task` | Espera el resultado de una tarea hija con un timeout opcional; el timeout no cancela la tarea |
+| `run_http_server` | Inicia un servidor HTTP local de solo lectura para servir el workspace en `http://127.0.0.1:8000/` |
 | `get_current_time` | Devuelve la fecha/hora UTC actual |
+
+Las tareas paralelas trabajan en historiales independientes. Antes de finalizar, el agente
+principal espera sus resultados o aplica el timeout configurado en
+`parallel_task_timeout`. Al cerrar Hercules se cancelan las tareas hijas pendientes.
 
 
 ## 🎨 Interfaz moderna
@@ -114,7 +131,7 @@ En entorno cloud, casi la totalidad de modelos multimodales son capaces de hacer
 ```bash
 git clone https://github.com/bondwell79/hercules.git
 cd hercules
-pip install -R requirements.txt
+pip install -r requirements.txt
 python hercules.py
 ```
 
@@ -124,8 +141,22 @@ Usar el script `run.bat`, que activa el entorno virtual y lanza `hercules.py`.
 
 El fichero `config.ini` ya viene incluido con valores por defecto; edítalo para ajustar la ruta del modelo GGUF, el modo del LLM (`local` / `http`) y otros parámetros. En el menú de configuración puedes cambiar el tema, la pantalla completa y la tipografía, y comprobarlos en la vista previa de Interfaz.
 
-El fichero `subtareas.ini` es la única definición del plan de trabajo del agente: cada sección en orden que tenga un `prompt` crea una subtarea con ese nombre. Puedes añadir, quitar, renombrar o reordenar fases libremente; usa `{user_prompt}` para incluir la petición original y `{NOMBRE_SECCION}` para insertar la salida de una subtarea anterior. No hay fases especiales ni plan predeterminado: si falta el fichero o no define subtareas válidas, el programa no ejecuta ninguna subtarea. El `subtareas.ini` distribuido incluye un plan inicial (`ANALIZAR`, `IMPLEMENTAR`, `COMPROBAR`) que puedes sustituir por completo.
-La barra de título se configura con `titlebar_style` (`system` | `dark` | `accent` | `custom`) en `[UI]`; también admite las variables de entorno `HERCULES_TITLEBAR_STYLE`, `HERCULES_TITLEBAR_COLOR` y `HERCULES_TITLEBAR_TEXT_COLOR`. En plataformas distintas de Windows no tiene efecto.
+El fichero `subtareas.ini` es la única definición del plan de trabajo del agente: cada sección en orden que tenga un `prompt` crea una subtarea con ese nombre. Puedes añadir, quitar, renombrar o reordenar fases libremente; usa `{user_prompt}` para incluir la petición original y `{NOMBRE_SECCION}` para insertar la salida de una subtarea anterior. No hay fases especiales ni plan predeterminado: si falta el fichero o no define subtareas válidas, el programa no ejecuta ninguna subtarea. El plan distribuido incluye una etapa inicial `EJECUTAR`, configurable sin restricciones.
+
+El `[Agent]` de `config.ini` permite ajustar límites y robustez: `max_parallel_tasks`
+(3 por defecto), `parallel_task_timeout` (1800 segundos; 0 desactiva el límite),
+`context_compact_threshold`, `preauth_timeout`, `preauth_fallback_to_human`,
+`command_timeout`, `log_max_mb` y `log_retention_days`.
+
+La barra de título se configura con `titlebar_style` (`system` | `dark` | `accent` |
+`custom`) en `[UI]`; también admite las variables de entorno
+`HERCULES_TITLEBAR_STYLE`, `HERCULES_TITLEBAR_COLOR` y
+`HERCULES_TITLEBAR_TEXT_COLOR`. En plataformas distintas de Windows no tiene efecto.
+
+Hercules tolera valores inválidos en `config.ini` y variables de entorno, cargando
+los valores predeterminados seguros. Los logs rotan en `log/`, las conexiones SQLite
+usan WAL y se cierran al terminar. Si el contexto se desborda o se detecta un bucle,
+el agente compacta el contexto y reintenta sin perder el hilo de trabajo.
 
 ## 🧪 Tests
 
@@ -147,6 +178,8 @@ Suites individuales:
 | `test_modern_titlebar.py` | opciones de barra de título en Configuración Qt |
 | `test_welcome_dialog.py` | diálogo Qt de bienvenida durante el arranque |
 | `test_computer_tools.py` | herramientas de captura de pantalla y control del ratón y teclado |
+| `test_produccion.py` | cancelación, contexto, configuración, SQLite y robustez de arranque |
+| `test_parallel_tasks.py` | tareas paralelas, límites, espera y cancelación |
 
 ## 🏗️ Compilar ejecutable en Windows
 
