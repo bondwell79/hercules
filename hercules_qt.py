@@ -1205,6 +1205,9 @@ class QtDashboard(QMainWindow):
         self._configure_window()
         self._build_layout()
         self._setup_browser()
+        browser_index = self.workspace_tabs.indexOf(self.web_view.parentWidget())
+        if browser_index >= 0:
+            self.workspace_tabs.setCurrentIndex(browser_index)
         self.web_view.setUrl(QUrl(DEFAULT_BROWSER_URL))
         self._refresh_task_lists()
         self._select_task(None)

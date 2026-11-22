@@ -80,6 +80,29 @@ class QtDashboardLayoutTests(unittest.TestCase):
         self.window.close()
         self.workspace_dir.cleanup()
 
+    def _wait_for_browser_page(self, page_path, ready_script):
+        page_url = QUrl.fromLocalFile(str(page_path))
+        loop = QEventLoop()
+        timeout = QTimer()
+        timeout.setSingleShot(True)
+        timeout.timeout.connect(loop.quit)
+        ready = []
+
+        def on_loaded(success):
+            if not success or self.window.web_view.url() != page_url:
+                return
+            self.window.web_view.page().runJavaScript(
+                ready_script,
+                lambda result: (ready.append(result), loop.quit()) if result else None,
+            )
+
+        self.window.web_view.loadFinished.connect(on_loaded)
+        timeout.start(15000)
+        self.window.web_view.setUrl(page_url)
+        loop.exec()
+        self.window.web_view.loadFinished.disconnect(on_loaded)
+        self.assertEqual(ready, [True])
+
     def test_file_mutations_do_not_show_files_in_browser(self):
         self.assertFalse(hasattr(self.window, "_show_changed_file"))
 
@@ -333,16 +356,11 @@ class QtDashboardLayoutTests(unittest.TestCase):
             "</script>",
             encoding="utf-8",
         )
+        self._wait_for_browser_page(
+            page_path,
+            "Boolean(window.mouseEvents && document.getElementById('target'))",
+        )
         page = self.window.web_view.page()
-        loop = QEventLoop()
-        load_timer = QTimer()
-        load_timer.setSingleShot(True)
-        load_timer.timeout.connect(loop.quit)
-        self.window.web_view.loadFinished.connect(loop.quit)
-        self.window.web_view.setUrl(QUrl.fromLocalFile(str(page_path)))
-        load_timer.start(15000)
-        loop.exec()
-        self.window.web_view.loadFinished.disconnect(loop.quit)
 
         def wait_for_tool(completed):
             wait_loop = QEventLoop()
@@ -511,15 +529,7 @@ class QtDashboardLayoutTests(unittest.TestCase):
             "</script>",
             encoding="utf-8",
         )
-        loaded = QEventLoop()
-        load_timer = QTimer()
-        load_timer.setSingleShot(True)
-        load_timer.timeout.connect(loaded.quit)
-        self.window.web_view.loadFinished.connect(loaded.quit)
-        self.window.web_view.setUrl(QUrl.fromLocalFile(str(page_path)))
-        load_timer.start(15000)
-        loaded.exec()
-        self.window.web_view.loadFinished.disconnect(loaded.quit)
+        self._wait_for_browser_page(page_path, "Boolean(window.keyEvents)")
         self.assertEqual(self.window.web_view.url(), QUrl.fromLocalFile(str(page_path)))
 
         bridge = BrowserToolBridge(self.window)
@@ -749,11 +759,6 @@ class QtDashboardLayoutTests(unittest.TestCase):
         self.assertFalse(self.window._is_command_execution_history_entry(other_tool))
 
     def test_webengine_executes_javascript(self):
-        loop = QEventLoop()
-        result = []
-        timer = QTimer()
-        timer.setSingleShot(True)
-        timer.timeout.connect(loop.quit)
         page_path = Path(self.workspace_dir.name) / "page with spaces.html"
         page_path.write_text(
             "<html><head><title>pending</title></head>"
@@ -761,21 +766,10 @@ class QtDashboardLayoutTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        def on_loaded(success):
-            if success:
-                self.window.web_view.page().runJavaScript(
-                    "document.title",
-                    lambda title: (result.append(title), loop.quit()),
-                )
-            else:
-                loop.quit()
-
-        self.window.web_view.loadFinished.connect(on_loaded)
-        self.window.web_view.setUrl(QUrl.fromLocalFile(str(page_path)))
-        timer.start(15000)
-        loop.exec()
-        self.window.web_view.loadFinished.disconnect(on_loaded)
-        self.assertEqual(result, ["qt-webengine-js-ok"])
+        self._wait_for_browser_page(
+            page_path,
+            "document.title === 'qt-webengine-js-ok'",
+        )
 
     def test_local_document_policy_confines_files_to_workspace(self):
         workspace = Path(self.workspace_dir.name)
