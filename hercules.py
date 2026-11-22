@@ -1310,6 +1310,19 @@ def _image_message(image_data: str) -> Dict[str, Any]:
     }
 
 
+def _multimodal_part_category(part: Dict[str, Any]) -> Optional[str]:
+    kind = str(part.get("type", "")).lower()
+    if kind in {"image_url", "image"}:
+        return "image"
+    if kind in {"input_audio", "audio", "audio_url", "audio_data"}:
+        return "audio"
+    if kind in {"video", "video_url", "video_frame"}:
+        return "video"
+    if kind in {"binary", "input_binary", "file", "file_url"}:
+        return "binary"
+    return None
+
+
 def _media_images_message(images: List[Tuple[str, str]]) -> Dict[str, Any]:
     """Agrupa imágenes con sus descripciones en un único mensaje multimodal."""
     content: List[Dict[str, Any]] = [
@@ -4319,6 +4332,134 @@ class Agent:
 
     # --- Compactación de contexto ---
 
+    @staticmethod
+    def _precompact_multimodal_context(
+        messages: List[Dict[str, Any]],
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+        """Retiene el adjunto más reciente de cada tipo sin resumir el historial."""
+        tool_names: Dict[str, str] = {}
+        for msg in messages:
+            if msg.get("role") != "assistant":
+                continue
+            for tool_call in msg.get("tool_calls", []) or []:
+                if not isinstance(tool_call, dict):
+                    continue
+                function = tool_call.get("function", {})
+                if isinstance(function, dict) and isinstance(tool_call.get("id"), str):
+                    tool_names[tool_call["id"]] = str(function.get("name", ""))
+
+        latest_parts: Dict[str, Tuple[int, int]] = {}
+        latest_video: Optional[Tuple[str, int, Optional[int]]] = None
+        latest_binary: Optional[Tuple[str, int, Optional[int]]] = None
+        binary_tool_results = set()
+
+        def is_video_frame_group(content: Any) -> bool:
+            return isinstance(content, list) and any(
+                isinstance(part, dict)
+                and part.get("type") == "text"
+                and str(part.get("text", "")).startswith("Fotograma ")
+                for part in content
+            )
+
+        def is_binary_tool_output(tool_name: str, content: Any) -> bool:
+            if not isinstance(content, str):
+                return False
+            if tool_name == "read_binary_file":
+                return content.startswith("Base64 (")
+            return tool_name == "read_binary_hex" and any(
+                len(line) >= 10
+                and all(char in "0123456789abcdefABCDEF" for char in line[:8])
+                and line[8:10] == "  "
+                for line in content.splitlines()
+            )
+
+        for message_index, msg in enumerate(messages):
+            content = msg.get("content")
+            frame_group = is_video_frame_group(content)
+            if frame_group:
+                latest_video = ("group", message_index, None)
+
+            if isinstance(content, list):
+                for part_index, part in enumerate(content):
+                    if not isinstance(part, dict):
+                        continue
+                    category = _multimodal_part_category(part)
+                    if category is None:
+                        continue
+                    if category == "image" and frame_group:
+                        continue
+
+                    if category == "video":
+                        latest_video = ("part", message_index, part_index)
+                    elif category == "binary":
+                        latest_binary = ("part", message_index, part_index)
+                    else:
+                        latest_parts[category] = (message_index, part_index)
+
+            if msg.get("role") == "tool":
+                tool_name = tool_names.get(str(msg.get("tool_call_id", "")))
+                if tool_name in {"read_binary_file", "read_binary_hex"} and is_binary_tool_output(
+                    tool_name, content
+                ):
+                    latest_binary = ("tool", message_index, None)
+                    binary_tool_results.add(message_index)
+
+        removed = {"image": 0, "audio": 0, "video": 0, "binary": 0}
+        updated_messages = list(messages)
+        for message_index, msg in enumerate(messages):
+            content = msg.get("content")
+            frame_group = is_video_frame_group(content)
+            remove_part_indices = set()
+            if isinstance(content, list):
+                for part_index, part in enumerate(content):
+                    if not isinstance(part, dict):
+                        continue
+                    category = _multimodal_part_category(part)
+                    if category == "image":
+                        if frame_group:
+                            category = "video"
+                            keep = latest_video == ("group", message_index, None)
+                        else:
+                            keep = latest_parts.get(category) == (message_index, part_index)
+                    elif category == "audio":
+                        keep = latest_parts.get(category) == (message_index, part_index)
+                    elif category == "video":
+                        keep = latest_video == ("part", message_index, part_index)
+                    elif category == "binary":
+                        keep = latest_binary == ("part", message_index, part_index)
+                    else:
+                        continue
+                    if not keep:
+                        remove_part_indices.add(part_index)
+                        removed[category] += 1
+
+                if remove_part_indices:
+                    new_content = [
+                        part
+                        for part_index, part in enumerate(content)
+                        if part_index not in remove_part_indices
+                    ]
+                    if not new_content:
+                        new_content = [
+                            {
+                                "type": "text",
+                                "text": "[Adjunto multimodal anterior omitido durante la precompactación.]",
+                            }
+                        ]
+                    updated_messages[message_index] = {**msg, "content": new_content}
+
+            if (
+                message_index in binary_tool_results
+                and latest_binary != ("tool", message_index, None)
+            ):
+                updated_messages[message_index] = {
+                    **updated_messages[message_index],
+                    "content": "[Contenido binario anterior omitido durante la precompactación.]",
+                }
+                removed["binary"] += 1
+
+        return updated_messages, {kind: count for kind, count in removed.items() if count}
+
     def _compact_context(
         self,
         task_id: int,
@@ -4635,9 +4776,9 @@ class Agent:
 
         Aproximación: 1 token ≈ 3 caracteres (estimación conservadora para
         texto en español y código con tokenizadores BPE como LLaMA / Qwen).
-        Se cuentan los caracteres de ``content`` y de los argumentos
-        serializados de ``tool_calls``. ``extra_chars`` permite añadir el
-        tamaño del esquema de herramientas, que también consume contexto.
+        Las partes multimodales se estiman en 4096 caracteres cada una.
+        ``extra_chars`` permite añadir el tamaño del esquema de herramientas,
+        que también consume contexto.
 
         Devuelve ``(tokens_estimados, max_tokens, porcentaje)``.
         El porcentaje se limita a ``[0, 100]``.
@@ -4653,7 +4794,7 @@ class Agent:
                         text = part.get("text", "")
                         if isinstance(text, str):
                             total_chars += len(text)
-                    elif isinstance(part, dict) and part.get("type") == "image_url":
+                    elif isinstance(part, dict) and _multimodal_part_category(part):
                         total_chars += 4096
             # Contar también los argumentos de tool_calls.
             for tc in msg.get("tool_calls", []) or []:
@@ -4767,17 +4908,45 @@ class Agent:
                     f"--- Iteración {iteration}/{MAX_ITERATIONS} ---",
                 )
 
-                # Compactación preventiva por tamaño de contexto: antes de
-                # enviar el historial al modelo, se estima el uso de tokens.
-                # Si supera el porcentaje configurado (CONTEXT_COMPACT_THRESHOLD)
-                # del límite n_ctx, se compacta el contexto para evitar que
-                # el modelo se quede sin espacio o degrade la respuesta.
-                # Esto es independiente de la detección de bucles.
+                # Antes de la compactación normal, la precompactación poda los
+                # adjuntos multimodales antiguos al alcanzar la mitad del umbral.
+                # Si se supera el umbral configurado, se compacta el historial.
+                # Ambos mecanismos son independientes de la detección de bucles.
                 # Tras compactar se envía la petición en esta misma iteración:
                 # si ni siquiera [system, user] cabe bajo el umbral, repetir la
                 # compactación no ayudaría y agotaría las iteraciones sin llamar
                 # al modelo, así que se deja decidir al servidor.
                 _, _, current_percent = self._estimate_context_usage(messages, schema_chars)
+                precompact_threshold = max(1, CONTEXT_COMPACT_THRESHOLD // 2)
+                if current_percent >= precompact_threshold:
+                    messages, removed_multimodal = self._precompact_multimodal_context(
+                        messages
+                    )
+                    if removed_multimodal:
+                        labels = {
+                            "image": "imágenes",
+                            "audio": "adjuntos de audio",
+                            "video": "vídeos/fotogramas",
+                            "binary": "adjuntos binarios",
+                        }
+                        removed_summary = ", ".join(
+                            f"{count} {labels[kind]}"
+                            for kind, count in removed_multimodal.items()
+                        )
+                        self._log(
+                            task_id,
+                            EventType.INFO,
+                            (
+                                f"Precompactación multimodal al {current_percent}% "
+                                f"(umbral {precompact_threshold}%): eliminados "
+                                f"{removed_summary}; se conserva el más reciente "
+                                f"de cada tipo."
+                            ),
+                        )
+                        self._publish_context_usage(task_id, messages, schema_chars)
+                        _, _, current_percent = self._estimate_context_usage(
+                            messages, schema_chars
+                        )
                 if current_percent >= CONTEXT_COMPACT_THRESHOLD and len(messages) > 2:
                     self._log(
                         task_id,

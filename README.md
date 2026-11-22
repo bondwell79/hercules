@@ -147,6 +147,9 @@ El `[Agent]` de `config.ini` permite ajustar límites y robustez: `max_parallel_
 (3 por defecto), `parallel_task_timeout` (1800 segundos; 0 desactiva el límite),
 `context_compact_threshold`, `preauth_timeout`, `preauth_fallback_to_human`,
 `command_timeout`, `log_max_mb` y `log_retention_days`.
+Al alcanzar la mitad de `context_compact_threshold`, Hercules elimina los
+adjuntos multimodales antiguos y conserva el más reciente de cada tipo; al
+alcanzar el umbral completo, compacta el historial.
 
 La barra de título se configura con `titlebar_style` (`system` | `dark` | `accent` |
 `custom`) en `[UI]`; también admite las variables de entorno

@@ -276,6 +276,174 @@ class CompactionTests(_Base):
         kinds = [p["type"] for p in compacted[1]["content"]]
         self.assertEqual(kinds, ["text", "image_url"])
 
+    def test_precompaction_keeps_latest_attachment_of_each_type(self) -> None:
+        agent = self.make_agent(_ScriptedLLM([]))
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "haz algo"},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": "imagen-antigua"}},
+                    {"type": "input_audio", "input_audio": {"data": "audio-antiguo"}},
+                    {"type": "video_url", "video_url": {"url": "video-antiguo"}},
+                    {"type": "binary", "data": "binario-antiguo"},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Fotograma 1 en 00:00:01.000"},
+                    {"type": "image_url", "image_url": {"url": "fotograma-1"}},
+                    {"type": "text", "text": "Fotograma 2 en 00:00:02.000"},
+                    {"type": "image_url", "image_url": {"url": "fotograma-2"}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": "imagen-reciente"}},
+                    {"type": "audio", "data": "audio-reciente"},
+                    {"type": "binary", "data": "binario-reciente"},
+                ],
+            },
+        ]
+
+        compacted, removed = agent._precompact_multimodal_context(messages)
+
+        self.assertEqual(
+            removed,
+            {"image": 1, "audio": 1, "video": 1, "binary": 1},
+        )
+        self.assertEqual(
+            compacted[4]["content"][0]["image_url"]["url"], "imagen-reciente"
+        )
+        self.assertEqual(compacted[4]["content"][1]["data"], "audio-reciente")
+        self.assertEqual(compacted[4]["content"][2]["data"], "binario-reciente")
+        frame_urls = [
+            part["image_url"]["url"]
+            for part in compacted[3]["content"]
+            if part.get("type") == "image_url"
+        ]
+        self.assertEqual(frame_urls, ["fotograma-1", "fotograma-2"])
+
+    def test_context_estimate_counts_audio_video_and_binary_parts(self) -> None:
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_audio", "input_audio": {"data": "audio"}},
+                    {"type": "video_url", "video_url": {"url": "video"}},
+                    {"type": "binary", "data": "binary"},
+                ],
+            }
+        ]
+        with patch.object(ga, "LLM_N_CTX", 10_000):
+            estimated_tokens, max_tokens, percent = ga.Agent._estimate_context_usage(
+                messages
+            )
+
+        self.assertEqual(estimated_tokens, 4096)
+        self.assertEqual(max_tokens, 10_000)
+        self.assertEqual(percent, 40)
+
+    def test_precompaction_preserves_latest_binary_tool_result_and_call_pair(self) -> None:
+        agent = self.make_agent(_ScriptedLLM([]))
+        messages = [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "binary-1",
+                        "type": "function",
+                        "function": {"name": "read_binary_file", "arguments": "{}"},
+                    },
+                    {
+                        "id": "binary-2",
+                        "type": "function",
+                        "function": {"name": "read_binary_file", "arguments": "{}"},
+                    },
+                ],
+            },
+            {"role": "tool", "tool_call_id": "binary-1", "content": "Base64 (2 bytes): AA=="},
+            {"role": "tool", "tool_call_id": "binary-2", "content": "Base64 (2 bytes): AQ=="},
+        ]
+
+        compacted, removed = agent._precompact_multimodal_context(messages)
+
+        self.assertEqual(removed, {"binary": 1})
+        self.assertEqual(compacted[0]["tool_calls"], messages[0]["tool_calls"])
+        self.assertIn("omitido", compacted[1]["content"])
+        self.assertEqual(compacted[2]["content"], "Base64 (2 bytes): AQ==")
+
+    def test_run_precompacts_multimodal_before_regular_compaction(self) -> None:
+        llm = _ScriptedLLM(
+            [
+                _ScriptedLLM.tool_call("read_media_file", {"path": "one"}, "image-1"),
+                _ScriptedLLM.tool_call("read_media_file", {"path": "two"}, "image-2"),
+                _ScriptedLLM._final("hecho"),
+            ]
+        )
+        agent = self.make_agent(llm)
+        task = self.db.create_task("t", "analiza las imágenes")
+
+        def estimate_usage(messages, extra_chars=0):
+            image_count = 0
+            for message in messages:
+                content = message.get("content")
+                if isinstance(content, list):
+                    image_count += sum(
+                        part.get("type") == "image_url"
+                        for part in content
+                        if isinstance(part, dict)
+                    )
+            percent = 45 if image_count > 1 else 20
+            return percent * 10, 1000, percent
+
+        def execute_tool(task_id, call, cancel_event=None):
+            return ga.ToolResult(
+                call.id,
+                call.name,
+                True,
+                "imagen adjunta",
+                f"data:image/jpeg;base64,{call.id}",
+            )
+
+        with (
+            patch.object(ga.Agent, "_estimate_context_usage", side_effect=estimate_usage),
+            patch.object(ga.Agent, "_execute_tool_call", side_effect=execute_tool),
+            patch.object(ga, "CONTEXT_COMPACT_THRESHOLD", 80),
+        ):
+            agent.run(task)
+
+        self.assertEqual(self.db.get_task(task.id).status, ga.TaskStatus.COMPLETED)
+        final_request = llm.calls[-1]
+        image_count = 0
+        for message in final_request:
+            content = message.get("content")
+            if isinstance(content, list):
+                image_count += sum(
+                    part.get("type") == "image_url"
+                    for part in content
+                    if isinstance(part, dict)
+                )
+        self.assertEqual(image_count, 1)
+        earlier_image_message = next(
+            message
+            for message in final_request
+            if isinstance(message.get("content"), list)
+            and any(
+                part.get("type") == "text"
+                and "captura de pantalla" in part.get("text", "")
+                for part in message["content"]
+                if isinstance(part, dict)
+            )
+        )
+        self.assertFalse(
+            any(part.get("type") == "image_url" for part in earlier_image_message["content"])
+        )
+
     def test_oversized_prompt_still_reaches_the_model(self) -> None:
         """Un prompt que ya supera el umbral no debe agotar las iteraciones."""
         llm = _ScriptedLLM([_ScriptedLLM._final("ok")])
