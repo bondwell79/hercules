@@ -78,6 +78,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 
 
 APPROVAL_DISPLAY_MAX_CHARS = 255
+DEFAULT_BROWSER_URL = "https://bondwell79.github.io/hercules/welcome.html"
 
 
 def _is_within_workspace(path: Path, workspace: Path) -> bool:
@@ -1204,7 +1205,7 @@ class QtDashboard(QMainWindow):
         self._configure_window()
         self._build_layout()
         self._setup_browser()
-        self._show_workspace_in_browser()
+        self.web_view.setUrl(QUrl(DEFAULT_BROWSER_URL))
         self._refresh_task_lists()
         self._select_task(None)
 

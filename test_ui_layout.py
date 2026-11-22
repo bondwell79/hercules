@@ -117,7 +117,8 @@ class QtDashboardLayoutTests(unittest.TestCase):
             ["Terminal de sistema", "Navegador web"],
         )
         self.assertEqual(
-            self.window.web_view.url(), QUrl.fromLocalFile(str(self.window.workspace))
+            self.window.web_view.url(),
+            QUrl("https://bondwell79.github.io/hercules/welcome.html"),
         )
         self.assertIsInstance(self.window.terminal_view, QPlainTextEdit)
         self.assertTrue(self.window.terminal_view.isReadOnly())
