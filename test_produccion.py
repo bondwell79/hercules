@@ -347,6 +347,68 @@ class CompactionTests(_Base):
         self.assertEqual(max_tokens, 10_000)
         self.assertEqual(percent, 40)
 
+    def test_run_uses_reported_prompt_tokens_for_context_usage(self) -> None:
+        response = _ScriptedLLM.tool_call("get_current_time", {})
+        response["usage"] = {"prompt_tokens": 625}
+        llm = _ScriptedLLM([response, _ScriptedLLM._final("listo")])
+        agent = self.make_agent(llm)
+        task = self.db.create_task("t", "responde")
+
+        with (
+            patch.object(ga, "LLM_N_CTX", 1_000),
+            patch.object(
+                ga.Agent,
+                "_execute_tool_call",
+                return_value=ga.ToolResult("c1", "get_current_time", True, "ahora"),
+            ),
+        ):
+            agent.run(task)
+
+        context_events = []
+        while not self.ui_queue.empty():
+            event = self.ui_queue.get_nowait()
+            if event.get("type") == "context_usage":
+                context_events.append(event)
+
+        self.assertGreaterEqual(len(context_events), 1)
+        self.assertEqual(context_events[0]["tokens_used"], 625)
+        self.assertEqual(context_events[0]["max_tokens"], 1_000)
+        self.assertEqual(context_events[0]["percent"], 62)
+
+    def test_run_keeps_estimated_context_usage_when_response_has_no_usage(self) -> None:
+        llm = _ScriptedLLM(
+            [
+                _ScriptedLLM.tool_call("get_current_time", {}),
+                _ScriptedLLM._final("listo"),
+            ]
+        )
+        agent = self.make_agent(llm)
+        task = self.db.create_task("t", "dime la hora")
+
+        with (
+            patch.object(
+                ga.Agent,
+                "_estimate_context_usage",
+                return_value=(321, 1_000, 32),
+            ),
+            patch.object(
+                ga.Agent,
+                "_execute_tool_call",
+                return_value=ga.ToolResult("c1", "get_current_time", True, "ahora"),
+            ),
+        ):
+            agent.run(task)
+
+        context_events = []
+        while not self.ui_queue.empty():
+            event = self.ui_queue.get_nowait()
+            if event.get("type") == "context_usage":
+                context_events.append(event)
+
+        self.assertEqual(len(context_events), 1)
+        self.assertEqual(context_events[0]["tokens_used"], 321)
+        self.assertEqual(context_events[0]["percent"], 32)
+
     def test_precompaction_preserves_latest_binary_tool_result_and_call_pair(self) -> None:
         agent = self.make_agent(_ScriptedLLM([]))
         messages = [

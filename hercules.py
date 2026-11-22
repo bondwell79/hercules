@@ -4823,6 +4823,20 @@ class Agent:
         return estimated_tokens, LLM_N_CTX, percent
 
     @staticmethod
+    def _reported_prompt_tokens(response: Dict[str, Any]) -> Optional[int]:
+        usage = response.get("usage")
+        if not isinstance(usage, dict):
+            return None
+        prompt_tokens = usage.get("prompt_tokens")
+        if (
+            isinstance(prompt_tokens, bool)
+            or not isinstance(prompt_tokens, int)
+            or prompt_tokens < 0
+        ):
+            return None
+        return prompt_tokens
+
+    @staticmethod
     def _fit_tool_output(output: str) -> str:
         """
         Acota el resultado de una herramienta que se añade al contexto.
@@ -4841,11 +4855,17 @@ class Agent:
         task_id: int,
         messages: List[Dict[str, Any]],
         extra_chars: int = 0,
+        measured_tokens: Optional[int] = None,
     ) -> None:
-        """Publica el uso de contexto estimado en la cola de la UI."""
-        tokens_used, max_tokens, percent = self._estimate_context_usage(
-            messages, extra_chars
-        )
+        """Publica el uso estimado o medido del contexto en la cola de la UI."""
+        if measured_tokens is None:
+            tokens_used, max_tokens, percent = self._estimate_context_usage(
+                messages, extra_chars
+            )
+        else:
+            tokens_used = measured_tokens
+            max_tokens = max(1, LLM_N_CTX)
+            percent = min(100, int(tokens_used * 100 / max_tokens))
         self.ui_queue.put(
             {
                 "type": "context_usage",
@@ -5028,6 +5048,15 @@ class Agent:
                     self._set_status(task_id, TaskStatus.CANCELLED)
                     return
 
+                measured_prompt_tokens = self._reported_prompt_tokens(raw)
+                if measured_prompt_tokens is not None:
+                    self._publish_context_usage(
+                        task_id,
+                        messages,
+                        schema_chars,
+                        measured_tokens=measured_prompt_tokens,
+                    )
+
                 content, tool_calls = LLMConnector.parse_assistant_message(raw)
                 try:
                     LLMConnector.validate_finish_reason(raw, bool(tool_calls))
@@ -5194,8 +5223,11 @@ class Agent:
                 messages.extend(image_messages)
 
                 # Publicar uso de contexto tras procesar las herramientas
-                # de esta iteración para que la UI actualice la barra.
-                self._publish_context_usage(task_id, messages, schema_chars)
+                # de esta iteración si el servidor no informó el uso real.
+                # Cuando hay medición, se conserva para no reemplazarla por
+                # una estimación del historial ya modificado por las herramientas.
+                if measured_prompt_tokens is None:
+                    self._publish_context_usage(task_id, messages, schema_chars)
 
             # Agotó iteraciones.
             self._log(

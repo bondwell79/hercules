@@ -150,6 +150,8 @@ El `[Agent]` de `config.ini` permite ajustar límites y robustez: `max_parallel_
 Al alcanzar la mitad de `context_compact_threshold`, Hercules elimina los
 adjuntos multimodales antiguos y conserva el más reciente de cada tipo; al
 alcanzar el umbral completo, compacta el historial.
+La barra de contexto usa `usage.prompt_tokens` cuando el modelo lo informa y,
+si no está disponible, mantiene la estimación actual.
 
 La barra de título se configura con `titlebar_style` (`system` | `dark` | `accent` |
 `custom`) en `[UI]`; también admite las variables de entorno
