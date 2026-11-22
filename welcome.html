@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#080b14">
+    <meta name="description" content="Bienvenido a Hercules: descubre cómo configurar, supervisar y aprovechar tu agente de modelos LLM.">
+    <title>Hercules — Guía de inicio</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #080b14;
+            --surface: #101725;
+            --surface-2: #141e2e;
+            --line: rgba(165, 190, 220, .13);
+            --text: #edf4ff;
+            --muted: #9aaac0;
+            --cyan: #62e7ee;
+            --violet: #9c8cff;
+            --green: #9be8ba;
+            --radius: 20px;
+            --mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+            --sans: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+        }
+
+        *, *::before, *::after { box-sizing: border-box; }
+        html { scroll-behavior: smooth; scroll-padding-top: 88px; }
+        body {
+            margin: 0;
+            color: var(--text);
+            background:
+                radial-gradient(ellipse at 82% 3%, rgba(87, 105, 212, .16), transparent 34rem),
+                radial-gradient(ellipse at 8% 30%, rgba(47, 195, 205, .08), transparent 32rem),
+                var(--bg);
+            font: 16px/1.7 var(--sans);
+            -webkit-font-smoothing: antialiased;
+        }
+        a { color: inherit; }
+        a:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; }
+        code, pre { font-family: var(--mono); }
+        .wrap { width: min(1120px, calc(100% - 48px)); margin-inline: auto; }
+
+        .topbar {
+            position: sticky;
+            top: 0;
+            z-index: 5;
+            border-bottom: 1px solid var(--line);
+            background: rgba(8, 11, 20, .82);
+            backdrop-filter: blur(18px);
+        }
+        .nav {
+            min-height: 70px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+        }
+        .brand {
+            display: inline-flex;
+            align-items: center;
+            gap: 11px;
+            font-size: .96rem;
+            font-weight: 750;
+            letter-spacing: .09em;
+            text-decoration: none;
+        }
+        .brand-mark {
+            display: grid;
+            width: 35px;
+            aspect-ratio: 1;
+            place-items: center;
+            border: 1px solid rgba(98, 231, 238, .38);
+            border-radius: 11px;
+            color: var(--cyan);
+            background: linear-gradient(145deg, rgba(98, 231, 238, .18), rgba(156, 140, 255, .16));
+            box-shadow: 0 0 24px rgba(98, 231, 238, .12);
+            font-size: 1.15rem;
+        }
+        .nav-links { display: flex; flex-wrap: wrap; gap: 23px; }
+        .nav-links a {
+            color: var(--muted);
+            font-size: .84rem;
+            text-decoration: none;
+            transition: color .2s ease;
+        }
+        .nav-links a:hover { color: var(--cyan); }
+
+        .hero { padding: 100px 0 78px; }
+        .hero-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1.18fr) minmax(270px, .82fr);
+            align-items: center;
+            gap: 54px;
+        }
+        .eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 9px;
+            color: var(--cyan);
+            font: 700 .72rem/1.4 var(--mono);
+            letter-spacing: .13em;
+            text-transform: uppercase;
+        }
+        .pulse {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--green);
+            box-shadow: 0 0 12px var(--green);
+        }
+        h1 {
+            max-width: 720px;
+            margin: 20px 0 18px;
+            font-size: clamp(2.9rem, 7vw, 5.7rem);
+            line-height: .99;
+            letter-spacing: -.065em;
+        }
+        h1 span {
+            color: transparent;
+            background: linear-gradient(100deg, var(--cyan), #b5c5ff 58%, var(--violet));
+            background-clip: text;
+            -webkit-background-clip: text;
+        }
+        .hero-copy { max-width: 620px; color: var(--muted); font-size: 1.08rem; }
+        .hero-copy strong { color: var(--text); font-weight: 600; }
+        .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 27px; }
+        .button {
+            min-height: 45px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 18px;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            color: var(--text);
+            background: var(--surface);
+            font-size: .89rem;
+            font-weight: 650;
+            text-decoration: none;
+            transition: transform .2s ease, border-color .2s ease, background .2s ease;
+        }
+        .button:hover { transform: translateY(-2px); border-color: rgba(98, 231, 238, .45); }
+        .button.primary { border-color: transparent; color: #071116; background: var(--cyan); }
+        .button.primary:hover { background: #9af4f5; }
+
+        .hero-card {
+            position: relative;
+            overflow: hidden;
+            padding: 24px;
+            border: 1px solid rgba(156, 140, 255, .22);
+            border-radius: 24px;
+            background: linear-gradient(145deg, rgba(21, 32, 49, .96), rgba(13, 19, 32, .94));
+            box-shadow: 0 30px 90px rgba(0, 0, 0, .28), inset 0 1px rgba(255,255,255,.04);
+        }
+        .hero-card::after {
+            position: absolute;
+            top: -90px;
+            right: -85px;
+            width: 220px;
+            height: 220px;
+            border: 1px solid rgba(98, 231, 238, .15);
+            border-radius: 50%;
+            box-shadow: 0 0 0 22px rgba(98, 231, 238, .025), 0 0 0 48px rgba(156, 140, 255, .025);
+            content: "";
+            pointer-events: none;
+        }
+        .card-kicker { color: var(--muted); font: .73rem var(--mono); letter-spacing: .08em; }
+        .flow { display: grid; gap: 12px; margin: 23px 0 0; padding: 0; list-style: none; }
+        .flow li {
+            display: flex;
+            align-items: center;
+            gap: 13px;
+            padding: 12px;
+            border: 1px solid var(--line);
+            border-radius: 13px;
+            background: rgba(255, 255, 255, .025);
+        }
+        .flow-icon {
+            display: grid;
+            flex: 0 0 35px;
+            width: 35px;
+            aspect-ratio: 1;
+            place-items: center;
+            border-radius: 10px;
+            color: var(--cyan);
+            background: rgba(98, 231, 238, .1);
+            font: 700 .74rem var(--mono);
+        }
+        .flow li:nth-child(2) .flow-icon { color: var(--violet); background: rgba(156, 140, 255, .12); }
+        .flow li:nth-child(3) .flow-icon { color: var(--green); background: rgba(155, 232, 186, .1); }
+        .flow strong { display: block; font-size: .88rem; }
+        .flow small { display: block; color: var(--muted); font-size: .76rem; }
+        .flow-arrow { margin: -7px 0 -7px 24px; color: #56677d; font: .8rem var(--mono); }
+
+        section { padding: 77px 0; border-top: 1px solid var(--line); }
+        .section-head { max-width: 690px; margin-bottom: 31px; }
+        .section-label {
+            color: var(--violet);
+            font: 700 .72rem var(--mono);
+            letter-spacing: .12em;
+            text-transform: uppercase;
+        }
+        h2 { margin: 10px 0 9px; font-size: clamp(1.8rem, 4vw, 2.65rem); line-height: 1.15; letter-spacing: -.04em; }
+        .section-head p, .muted { color: var(--muted); }
+        .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; }
+        .feature, .step, .tip {
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            background: linear-gradient(145deg, rgba(19, 29, 44, .85), rgba(13, 19, 31, .75));
+        }
+        .feature { min-height: 200px; padding: 22px; }
+        .feature-icon {
+            display: grid;
+            width: 39px;
+            aspect-ratio: 1;
+            place-items: center;
+            border: 1px solid rgba(98, 231, 238, .18);
+            border-radius: 12px;
+            color: var(--cyan);
+            background: rgba(98, 231, 238, .07);
+            font-size: 1.05rem;
+        }
+        .feature h3, .step h3 { margin: 14px 0 6px; font-size: 1rem; }
+        .feature p, .step p { margin: 0; color: var(--muted); font-size: .89rem; }
+        .feature code, .step code, .tip code { color: #b6eaf0; font-size: .86em; }
+
+        .tutorial { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; counter-reset: steps; }
+        .step { position: relative; min-height: 205px; padding: 22px 22px 22px 68px; counter-increment: steps; }
+        .step::before {
+            position: absolute;
+            top: 22px;
+            left: 21px;
+            display: grid;
+            width: 32px;
+            aspect-ratio: 1;
+            place-items: center;
+            border: 1px solid rgba(156, 140, 255, .35);
+            border-radius: 10px;
+            color: var(--violet);
+            background: rgba(156, 140, 255, .08);
+            content: "0" counter(steps);
+            font: 700 .72rem var(--mono);
+        }
+        pre {
+            overflow-x: auto;
+            margin: 14px 0 0;
+            padding: 13px 15px;
+            border: 1px solid rgba(98, 231, 238, .13);
+            border-radius: 12px;
+            color: #c9d7e9;
+            background: #090e18;
+            font-size: .8rem;
+            line-height: 1.65;
+            tab-size: 4;
+        }
+        .comment { color: #71859d; }
+
+        .safety {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 17px;
+            align-items: start;
+            padding: 22px;
+            border: 1px solid rgba(155, 232, 186, .2);
+            border-radius: var(--radius);
+            background: linear-gradient(110deg, rgba(155, 232, 186, .07), rgba(98, 231, 238, .025));
+        }
+        .safety .feature-icon { color: var(--green); border-color: rgba(155, 232, 186, .2); background: rgba(155, 232, 186, .08); }
+        .safety h3 { margin: 0 0 5px; font-size: 1rem; }
+        .safety p { margin: 0; color: var(--muted); font-size: .9rem; }
+        .tips { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; margin-top: 16px; }
+        .tip { padding: 19px; }
+        .tip strong { display: block; margin-bottom: 5px; font-size: .9rem; }
+        .tip p { margin: 0; color: var(--muted); font-size: .84rem; }
+        .cta {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+            padding: 29px;
+            border: 1px solid rgba(98, 231, 238, .19);
+            border-radius: 22px;
+            background: radial-gradient(ellipse at 100% 0, rgba(156, 140, 255, .15), transparent 45%), var(--surface);
+        }
+        .cta h2 { margin-top: 0; font-size: 1.55rem; }
+        .cta p { max-width: 590px; margin: 0; color: var(--muted); font-size: .9rem; }
+        footer { padding: 27px 0 36px; border-top: 1px solid var(--line); color: var(--muted); font-size: .8rem; }
+        footer .wrap { display: flex; justify-content: space-between; gap: 15px; }
+        footer a { color: var(--cyan); text-decoration: none; }
+
+        @media (max-width: 760px) {
+            .nav { align-items: flex-start; flex-direction: column; justify-content: center; gap: 6px; padding-block: 12px; }
+            .nav-links { gap: 15px; }
+            .hero { padding: 72px 0 55px; }
+            .hero-grid { grid-template-columns: 1fr; gap: 30px; }
+            .hero-card { max-width: 520px; }
+            section { padding: 58px 0; }
+            .grid, .tips { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+        @media (max-width: 520px) {
+            .wrap { width: min(100% - 32px, 1120px); }
+            .nav-links { gap: 11px; }
+            .nav-links a { font-size: .76rem; }
+            .grid, .tutorial, .tips { grid-template-columns: 1fr; }
+            .feature { min-height: 0; }
+            .step { min-height: 0; }
+            .cta, footer .wrap { align-items: flex-start; flex-direction: column; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+        }
+    </style>
+</head>
+<body>
+    <header class="topbar">
+        <nav class="nav wrap" aria-label="Navegación principal">
+            <a class="brand" href="#inicio"><span class="brand-mark" aria-hidden="true">H</span> HERCULES <span class="muted">/ GUÍA</span></a>
+            <div class="nav-links">
+                <a href="#capacidades">Capacidades</a>
+                <a href="#tutorial">Primeros pasos</a>
+                <a href="#control">Control y consejos</a>
+            </div>
+        </nav>
+    </header>
+
+    <main>
+        <section class="hero" id="inicio" style="border-top:0">
+            <div class="wrap hero-grid">
+                <div>
+                    <div class="eyebrow"><span class="pulse" aria-hidden="true"></span> Tu espacio de trabajo, aumentado</div>
+                    <h1>Bienvenido a <span>Hercules.</span></h1>
+                    <p class="hero-copy">
+                        Un agente para trabajar con modelos LLM: <strong>explora archivos, usa herramientas,
+                        navega por la web y coordina tareas</strong> mientras tú mantienes el control.
+                        Esta guía te lleva desde el primer arranque hasta un flujo de trabajo completo.
+                    </p>
+                    <div class="hero-actions">
+                        <a class="button primary" href="#tutorial">Empezar el tutorial <span aria-hidden="true">&nbsp;↓</span></a>
+                        <a class="button" href="#capacidades">Explorar capacidades</a>
+                    </div>
+                </div>
+                <aside class="hero-card" aria-label="Resumen del flujo de trabajo">
+                    <div class="card-kicker">UN FLUJO, CONTIGO AL MANDO</div>
+                    <ol class="flow">
+                        <li><span class="flow-icon" aria-hidden="true">01</span><span><strong>Define el objetivo</strong><small>Describe qué necesitas y dónde trabajar</small></span></li>
+                        <li><span class="flow-icon" aria-hidden="true">02</span><span><strong>Hercules actúa</strong><small>El agente elige herramientas y pasos</small></span></li>
+                        <li><span class="flow-icon" aria-hidden="true">03</span><span><strong>Revisa y continúa</strong><small>Supervisa, autoriza o cancela acciones</small></span></li>
+                    </ol>
+                </aside>
+            </div>
+        </section>
+
+        <section id="capacidades">
+            <div class="wrap">
+                <div class="section-head">
+                    <div class="section-label">01 / Qué puedes hacer</div>
+                    <h2>De una pregunta a un flujo de trabajo.</h2>
+                    <p>Hercules combina un agente autónomo con herramientas para que tareas cotidianas y procesos de varios pasos ocurran desde una sola interfaz.</p>
+                </div>
+                <div class="grid">
+                    <article class="feature">
+                        <div class="feature-icon" aria-hidden="true">▤</div>
+                        <h3>Trabajar con archivos</h3>
+                        <p>Leer y buscar contenido, listar carpetas, crear archivos y editar texto dentro del workspace. También puede inspeccionar archivos binarios y adjuntar medios compatibles.</p>
+                    </article>
+                    <article class="feature">
+                        <div class="feature-icon" aria-hidden="true">◎</div>
+                        <h3>Investigar en el navegador</h3>
+                        <p>Visitar páginas, leer su contenido, interactuar con controles, consultar la consola JavaScript y capturar una imagen del navegador integrado.</p>
+                    </article>
+                    <article class="feature">
+                        <div class="feature-icon" aria-hidden="true">⌘</div>
+                        <h3>Ejecutar comandos</h3>
+                        <p>Lanzar comandos del sistema para inspeccionar el proyecto, automatizar operaciones o ejecutar herramientas que ya tengas instaladas.</p>
+                    </article>
+                    <article class="feature">
+                        <div class="feature-icon" aria-hidden="true">⤢</div>
+                        <h3>Dividir y paralelizar</h3>
+                        <p>Delegar partes independientes en tareas paralelas, con límites configurables, seguimiento de resultados y cancelación controlada.</p>
+                    </article>
+                    <article class="feature">
+                        <div class="feature-icon" aria-hidden="true">⌖</div>
+                        <h3>Controlar el escritorio</h3>
+                        <p>Con la dependencia opcional <code>pyautogui</code>, usar herramientas autorizadas para capturar pantalla e interactuar con ratón y teclado.</p>
+                    </article>
+                    <article class="feature">
+                        <div class="feature-icon" aria-hidden="true">⟳</div>
+                        <h3>Adaptar el proceso</h3>
+                        <p>Definir fases de trabajo en <code>subtareas.ini</code> y ajustar modelo, límites, interfaz y otras opciones desde <code>config.ini</code>.</p>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <section id="tutorial">
+            <div class="wrap">
+                <div class="section-head">
+                    <div class="section-label">02 / Tutorial rápido</div>
+                    <h2>Tu primera tarea en cuatro pasos.</h2>
+                    <p>Empieza con un objetivo pequeño y un workspace conocido. Puedes ampliar el alcance cuando ya hayas revisado cómo trabaja el agente.</p>
+                </div>
+                <div class="tutorial">
+                    <article class="step">
+                        <h3>Inicia Hercules</h3>
+                        <p>En Windows, ejecuta <code>run.bat</code>. En otros entornos, instala los requisitos del proyecto y arranca desde la carpeta del repositorio:</p>
+                        <pre><code>python hercules.py</code></pre>
+                    </article>
+                    <article class="step">
+                        <h3>Comprueba el modelo</h3>
+                        <p>En <code>config.ini</code>, configura el modo de LLM (<code>local</code> o <code>http</code>) y los datos del proveedor o modelo. El modo local puede usar <code>llama-cpp-python</code> y un modelo GGUF.</p>
+                    </article>
+                    <article class="step">
+                        <h3>Describe una tarea concreta</h3>
+                        <p>Indica el resultado que buscas, el contexto relevante y cualquier límite. Por ejemplo, empieza pidiendo un análisis sin cambios:</p>
+                        <pre><code>Revisa la estructura de este workspace,
+resume sus componentes principales y sugiere
+un plan. No modifiques archivos todavía.</code></pre>
+                    </article>
+                    <article class="step">
+                        <h3>Revisa la respuesta y sigue</h3>
+                        <p>Lee el resultado y afina la petición. Para una tarea posterior, puedes pedir cambios específicos; revisa las solicitudes de autorización antes de permitir acciones.</p>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <section id="control">
+            <div class="wrap">
+                <div class="section-head">
+                    <div class="section-label">03 / Buenas prácticas</div>
+                    <h2>Autonomía con supervisión.</h2>
+                    <p>Hercules está diseñado para trabajar con el contexto del proyecto sin quitarte la capacidad de decidir qué acciones permitir.</p>
+                </div>
+                <div class="safety">
+                    <div class="feature-icon" aria-hidden="true">✓</div>
+                    <div>
+                        <h3>Revisa antes de autorizar</h3>
+                        <p>Las herramientas sujetas a autorización usan control humano en el bucle (HITL): puedes aprobarlas, preautorizarlas o cancelarlas según las opciones disponibles. La preautorización puede tener límites configurables; úsala solo cuando comprendas el alcance de las acciones.</p>
+                    </div>
+                </div>
+                <div class="tips">
+                    <article class="tip">
+                        <strong>Acota el workspace</strong>
+                        <p>Indica qué carpeta y archivos son relevantes. Para documentos locales, el navegador integrado limita el acceso al workspace.</p>
+                    </article>
+                    <article class="tip">
+                        <strong>Haz peticiones verificables</strong>
+                        <p>Especifica formato de salida, criterios de éxito y si quieres que el agente primero analice o proponga un plan.</p>
+                    </article>
+                    <article class="tip">
+                        <strong>Construye un flujo por fases</strong>
+                        <p>Configura <code>subtareas.ini</code> con prompts ordenados; usa <code>{user_prompt}</code> para incluir la petición original y referencias a resultados anteriores.</p>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <section id="siguiente">
+            <div class="wrap">
+                <div class="cta">
+                    <div>
+                        <h2>Listo para explorar.</h2>
+                        <p>Empieza con una tarea sencilla, observa qué herramientas propone Hercules y ve ajustando el flujo a tu manera de trabajar.</p>
+                    </div>
+                    <a class="button primary" href="https://github.com/bondwell79/hercules">Ver proyecto en GitHub <span aria-hidden="true">&nbsp;↗</span></a>
+                </div>
+            </div>
+        </section>
+    </main>
+    <footer>
+        <div class="wrap">
+            <span>Hercules · Guía de inicio</span>
+            <a href="https://github.com/bondwell79/hercules">Código fuente en GitHub</a>
+        </div>
+    </footer>
+</body>
+</html>
