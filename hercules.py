@@ -207,7 +207,7 @@ class Config:
             "font_size": "10",
         },
         "Agent": {
-            "system_prompt": "Eres un agente autónomo eficiente. Tu objetivo es resolver la tarea del usuario utilizando las herramientas (tool_calls) disponibles en el entorno de manera ordenada. Si te solicitan acceder a recursos de internet prioriza el uso de herramientas de navegador (browser). Si utilizas ejecución de comandos evita usar aquellos que sean bloqueantes (por ejemplo levantar un servidor a la espera). Si debes desarrollar aplicaciones con javascript usa browser_console para verificar errores.",
+            "system_prompt": "Eres un agente autónomo eficiente. Tu objetivo es resolver la tarea del usuario utilizando las herramientas (tool_calls) disponibles en el entorno de manera ordenada. Si te solicitan acceder a recursos de internet prioriza el uso de herramientas de navegador (browser). Si utilizas ejecución de comandos evita usar aquellos que sean bloqueantes (por ejemplo levantar un servidor a la espera). Si debes desarrollar aplicaciones con javascript usa browser_console para verificar errores. Cuando manipules el navegador integrado, no uses las herramientas de interacción con el escritorio (captura de pantalla, ratón o teclado); utiliza las herramientas browser_*.",
             "max_iterations": "10",
             "loop_threshold": "5",
             "max_parallel_tasks": "3",
@@ -3351,7 +3351,9 @@ class ToolsRegistry:
                 description=(
                     "Captura la pantalla y guarda una imagen PNG dentro del workspace. "
                     "Argumento opcional: path (ruta de salida relativa al workspace; "
-                    "por defecto, un archivo en la raíz del workspace)."
+                    "por defecto, un archivo en la raíz del workspace). "
+                    "ADVERTENCIA: no uses esta herramienta de escritorio mientras manipules "
+                    "el navegador integrado; usa browser_screenshot y las demás herramientas browser_*."
                 ),
                 risk=RiskLevel.SAFE,
                 parameters={
@@ -3372,7 +3374,9 @@ class ToolsRegistry:
                 description=(
                     "Hace clic con el ratón en coordenadas de pantalla. "
                     "Argumentos: x, y; button (left/right/middle, por defecto left), "
-                    "clicks (por defecto 1)."
+                    "clicks (por defecto 1). "
+                    "ADVERTENCIA: no uses esta herramienta de escritorio mientras manipules "
+                    "el navegador integrado; usa browser_click y las demás herramientas browser_*."
                 ),
                 risk=RiskLevel.SAFE,
                 parameters={
@@ -3401,7 +3405,9 @@ class ToolsRegistry:
                 name="mouse_move",
                 description=(
                     "Mueve el puntero a coordenadas de pantalla. "
-                    "Argumentos: x, y; duration (duración en segundos, por defecto 0)."
+                    "Argumentos: x, y; duration (duración en segundos, por defecto 0). "
+                    "ADVERTENCIA: no uses esta herramienta de escritorio mientras manipules "
+                    "el navegador integrado; usa las herramientas browser_*."
                 ),
                 risk=RiskLevel.SAFE,
                 parameters={
@@ -3425,7 +3431,9 @@ class ToolsRegistry:
                 name="keyboard_type_text",
                 description=(
                     "Escribe texto en el elemento que tenga el foco del teclado. "
-                    "Argumentos: text; interval (pausa en segundos entre teclas, por defecto 0)."
+                    "Argumentos: text; interval (pausa en segundos entre teclas, por defecto 0). "
+                    "ADVERTENCIA: no uses esta herramienta de escritorio mientras manipules "
+                    "el navegador integrado; usa browser_fill y las demás herramientas browser_*."
                 ),
                 risk=RiskLevel.SAFE,
                 parameters={
@@ -3449,7 +3457,9 @@ class ToolsRegistry:
                 description=(
                     "Pulsa una tecla o una combinación en el elemento que tenga el foco. "
                     "Argumento keys: lista de nombres de teclas de PyAutoGUI; "
-                    "por ejemplo [\"enter\"] o [\"ctrl\", \"s\"]."
+                    "por ejemplo [\"enter\"] o [\"ctrl\", \"s\"]. "
+                    "ADVERTENCIA: no uses esta herramienta de escritorio mientras manipules "
+                    "el navegador integrado; usa browser_press_key y las demás herramientas browser_*."
                 ),
                 risk=RiskLevel.SAFE,
                 parameters={

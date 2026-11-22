@@ -94,6 +94,28 @@ class ToolTests(unittest.TestCase):
             tools["run_http_server"].parameters["additionalProperties"]
         )
 
+    def test_desktop_tools_warn_against_integrated_browser_usage(self) -> None:
+        default_prompt = hercules.Config.DEFAULTS["Agent"]["system_prompt"]
+        self.assertIn("navegador integrado", default_prompt)
+        self.assertIn("browser_*", default_prompt)
+
+        tools = {
+            tool.name: tool
+            for tool in hercules.ToolsRegistry().all()
+            if tool.name in {
+                "take_screenshot",
+                "mouse_click",
+                "mouse_move",
+                "keyboard_type_text",
+                "keyboard_press_keys",
+            }
+        }
+
+        for name, tool in tools.items():
+            with self.subTest(tool=name):
+                self.assertIn("navegador integrado", tool.description)
+                self.assertIn("browser_*", tool.description)
+
     def test_workspace_http_server_is_shared_until_its_last_task_finishes(self) -> None:
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
