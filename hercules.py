@@ -79,7 +79,7 @@ def _app_path(value: str) -> str:
 
 
 CONFIG_PATH = os.environ.get("HERCULES_CONFIG") or _app_path("config.ini")
-VERSION = "2.0"
+VERSION = "2.1"
 SUBTAREAS_INI_PATH = os.environ.get("HERCULES_SUBTAREAS_INI") or _app_path("subtareas.ini")
 
 # Patrones peligrosos organizados por categoría.

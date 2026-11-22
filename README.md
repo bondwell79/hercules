@@ -12,7 +12,7 @@
 ```
 https://bondwell79.github.io/hercules/
 
-Versión actual: 2.0
+Versión actual: 2.1
 
 > Gestor agéntico de modelos LLM con control de permisos humano-en-el-bucle (HITL). El motor usa la biblioteca estándar de Python; la interfaz gráfica utiliza PySide6.
 
