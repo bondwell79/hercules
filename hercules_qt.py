@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import configparser
+import html
 import json
 import logging
 import math
@@ -40,7 +41,6 @@ from PySide6.QtGui import (
     QPainterPath,
     QPen,
     QShortcut,
-    QTextCharFormat,
     QTextCursor,
 )
 from PySide6.QtWidgets import (
@@ -65,6 +65,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QTreeWidget,
     QTreeWidgetItem,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -668,6 +669,7 @@ class SettingsDialog(QDialog):
         "UI": "🎨 Interfaz",
     }
     SUBTASKS_TAB_TITLE = "🔀 Subtareas"
+    TOOLS_TAB_TITLE = "🧰 Herramientas"
     THEMES = {
         "dark": "Modo dark",
         "ocean": "Modo ocean",
@@ -721,6 +723,25 @@ class SettingsDialog(QDialog):
         self.core = core_module
         self.config = core_module.CONFIG
         self.config_path = Path(self.config.path)
+        self.tools_config_path = Path(
+            getattr(
+                core_module,
+                "TOOLS_INI_PATH",
+                self.config_path.with_name("tools.ini"),
+            )
+        )
+        self.tools_registry = getattr(parent, "tools", None)
+        if not callable(getattr(self.tools_registry, "all_registered", None)):
+            self.tools_registry = None
+        self._tools_global_section = "global"
+        if self.tools_registry is None:
+            registry_factory = getattr(core_module, "ToolsRegistry", None)
+            if callable(registry_factory):
+                self.tools_registry = registry_factory(str(self.tools_config_path))
+        if self.tools_registry is not None:
+            self._tools_global_section = self.tools_registry.global_section
+        self._tool_fields: Dict[str, QCheckBox] = {}
+        self._initial_tools: Dict[str, bool] = {}
         self.subtasks_path = Path(
             getattr(core_module, "SUBTAREAS_INI_PATH", "subtareas.ini")
         )
@@ -737,14 +758,16 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.tabs, 1)
         try:
             self._build_tabs()
+            self._build_tools_tab()
             self._build_subtasks_tab()
-        except OSError as exc:
+        except (OSError, configparser.Error, ValueError) as exc:
             raise OSError(f"No se pudo leer la configuración: {exc}") from exc
 
         footer = QHBoxLayout()
         footer.addWidget(
             QLabel(
-                "Los cambios se guardan en config.ini y se aplican al reiniciar Hercules.",
+                "Los cambios se guardan en config.ini, tools.ini y subtareas.ini; "
+                "se aplican al reiniciar Hercules.",
                 self,
             ),
             1,
@@ -892,6 +915,57 @@ class SettingsDialog(QDialog):
         self.subtasks_edit.setPlaceholderText("[ANALIZAR]\\nprompt = ...")
         layout.addWidget(self.subtasks_edit, 1)
         self.tabs.addTab(tab, self.SUBTASKS_TAB_TITLE)
+
+    def _build_tools_tab(self) -> None:
+        tab = QWidget(self.tabs)
+        layout = QVBoxLayout(tab)
+        help_label = QLabel(
+            "Activa en [global] las herramientas disponibles por defecto. Los "
+            "perfiles definidos en tools.ini pueden sobrescribir solo las "
+            "herramientas que indiquen; las demás heredan estos valores.",
+            tab,
+        )
+        help_label.setWordWrap(True)
+        layout.addWidget(help_label)
+
+        tool_list = QWidget(tab)
+        tool_layout = QVBoxLayout(tool_list)
+        tool_layout.setContentsMargins(0, 0, 0, 0)
+        if self.tools_registry is not None:
+            registered_tools = self.tools_registry.all_registered()
+            for tool in registered_tools:
+                checkbox = QCheckBox(tool.name, tool_list)
+                checkbox.setToolTip(tool.description)
+                checkbox.setChecked(self.tools_registry.is_enabled(tool.name))
+                self._tool_fields[tool.name] = checkbox
+                tool_layout.addWidget(checkbox)
+        else:
+            parser = configparser.ConfigParser(interpolation=None)
+            if self.tools_config_path.exists():
+                with self.tools_config_path.open(encoding="utf-8") as config_file:
+                    parser.read_file(config_file)
+            if parser.has_section("global"):
+                self._tools_global_section = "global"
+            elif parser.has_section("tools"):
+                self._tools_global_section = "tools"
+            if parser.has_section(self._tools_global_section):
+                section = self._tools_global_section
+                for name, value in parser.items(section):
+                    checkbox = QCheckBox(name, tool_list)
+                    checkbox.setChecked(parser.getboolean(section, name))
+                    self._tool_fields[name] = checkbox
+                    tool_layout.addWidget(checkbox)
+        self._initial_tools = {
+            name: checkbox.isChecked()
+            for name, checkbox in self._tool_fields.items()
+        }
+        tool_layout.addStretch(1)
+
+        scroll = QScrollArea(tab)
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(tool_list)
+        layout.addWidget(scroll, 1)
+        self.tabs.addTab(tab, self.TOOLS_TAB_TITLE)
 
     def _add_setting(
         self,
@@ -1094,15 +1168,39 @@ class SettingsDialog(QDialog):
                 )
                 return
 
-        if not updates and not subtasks_changed:
+        tools_updates = {
+            name: str(checkbox.isChecked()).lower()
+            for name, checkbox in self._tool_fields.items()
+            if checkbox.isChecked() != self._initial_tools[name]
+        }
+
+        if not updates and not subtasks_changed and not tools_updates:
             self.accept()
             return
         try:
             if updates:
                 self.core._update_config_file(str(self.config_path), updates)
+            if tools_updates:
+                existing = (
+                    self.tools_config_path.read_text(encoding="utf-8")
+                    if self.tools_config_path.exists()
+                    else ""
+                )
+                parser = configparser.ConfigParser(interpolation=None)
+                if existing.strip():
+                    parser.read_string(existing)
+                if not parser.has_section(self._tools_global_section):
+                    if existing and not existing.endswith("\n"):
+                        existing += "\n"
+                    existing += f"\n[{self._tools_global_section}]\n"
+                    self.tools_config_path.write_text(existing, encoding="utf-8")
+                self.core._update_config_file(
+                    str(self.tools_config_path),
+                    {self._tools_global_section: tools_updates},
+                )
             if subtasks_changed:
                 self.subtasks_path.write_text(subtasks_text, encoding="utf-8")
-        except OSError as exc:
+        except (configparser.Error, OSError) as exc:
             QMessageBox.critical(
                 self,
                 "Error al guardar",
@@ -1384,6 +1482,16 @@ class QtDashboard(QMainWindow):
         self.prompt_edit.setMaximumBlockCount(1000)
         layout.addWidget(self.prompt_edit, 1)
 
+        profile_row = QHBoxLayout()
+        profile_row.addWidget(QLabel("Perfil de herramientas:", panel))
+        self.tool_profile_combo = QComboBox(panel)
+        get_profiles = getattr(self.tools, "profiles", None)
+        self.tool_profile_combo.addItems(
+            get_profiles() if callable(get_profiles) else ["global"]
+        )
+        profile_row.addWidget(self.tool_profile_combo, 1)
+        layout.addLayout(profile_row)
+
         controls = QHBoxLayout()
         self.execute_button = QPushButton("▶ Ejecutar", panel)
         self.execute_button.clicked.connect(self._execute_task)
@@ -1427,9 +1535,10 @@ class QtDashboard(QMainWindow):
         layout = QVBoxLayout(panel)
         self.history_title = QLabel("Historial de tarea (ninguna seleccionada)", panel)
         layout.addWidget(self.history_title)
-        self.history_view = QPlainTextEdit(panel)
+        self.history_view = QTextEdit(panel)
         self.history_view.setReadOnly(True)
-        self.history_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.history_view.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        self.history_view.document().setDocumentMargin(8)
         self.history_view.setStyleSheet(
             f"background: {self.config.ui_history_bg}; color: {self.config.ui_history_fg};"
         )
@@ -1688,8 +1797,14 @@ class QtDashboard(QMainWindow):
             self._append_history_entries(task_id, self.db.get_history(task_id))
         finally:
             self.history_view.setUpdatesEnabled(True)
-        self.history_view.moveCursor(QTextCursor.MoveOperation.End)
+        self._scroll_history_to_latest()
         self._refresh_context_bar()
+
+    def _scroll_history_to_latest(self) -> None:
+        self.history_view.moveCursor(QTextCursor.MoveOperation.End)
+        self.history_view.ensureCursorVisible()
+        scroll_bar = self.history_view.verticalScrollBar()
+        scroll_bar.setValue(scroll_bar.maximum())
 
     def _update_history_title(self, task: Any) -> None:
         parent_suffix = (
@@ -1716,25 +1831,14 @@ class QtDashboard(QMainWindow):
         entries = fetch_after(task_id, self._history_last_id)
         if not entries:
             return
-        scroll_bar = self.history_view.verticalScrollBar()
-        follow_tail = scroll_bar.value() >= scroll_bar.maximum() - 4
         self._append_history_entries(task_id, entries)
-        if follow_tail:
-            self.history_view.moveCursor(QTextCursor.MoveOperation.End)
+        self._scroll_history_to_latest()
 
-    def _history_colors(self) -> Dict[str, tuple[str, bool]]:
+    def _history_colors(self) -> Dict[str, str]:
         et = self.core.EventType
         return {
-            et.THOUGHT.value: ("ui_thought_fg", True),
-            et.TOOL_CALL.value: ("ui_tool_call_fg", False),
-            et.TOOL_RESULT.value: ("ui_tool_result_fg", False),
-            et.FINAL_ANSWER.value: ("ui_final_answer_fg", True),
-            et.ERROR.value: ("ui_error_fg", False),
-            et.STATUS_CHANGE.value: ("ui_status_change_fg", False),
-            et.INFO.value: ("ui_info_fg", False),
-            et.LOOP_DETECTED.value: ("ui_loop_detected_fg", False),
-            et.CONTEXT_COMPACTED.value: ("ui_context_compacted_fg", False),
-            et.CONTEXT_OVERFLOW.value: ("ui_context_overflow_fg", False),
+            et.THOUGHT.value: "ui_thought_fg",
+            et.FINAL_ANSWER.value: "ui_final_answer_fg",
         }
 
     def _append_history_entries(self, task_id: int, entries: Any) -> None:
@@ -1745,58 +1849,30 @@ class QtDashboard(QMainWindow):
             entry_id = getattr(entry, "id", None)
             if isinstance(entry_id, int):
                 self._history_last_id = max(self._history_last_id, entry_id)
-            if self._is_command_execution_history_entry(entry):
-                continue
             event_type = getattr(entry.event_type, "value", entry.event_type)
-            label = self.core.EVENT_LABELS.get(event_type, event_type)
-            color_key, bold = colors.get(event_type, ("ui_history_fg", False))
-            text_format = QTextCharFormat()
-            text_format.setForeground(QColor(getattr(self.config, color_key)))
-            text_format.setFontWeight(
-                QFont.Weight.Bold if bold else QFont.Weight.Normal
+            if event_type not in colors:
+                continue
+
+            color_key = colors[event_type]
+            foreground = QColor(getattr(self.config, color_key)).name()
+            bubble = QColor(self.config.ui_history_bg).lighter(
+                125 if event_type == self.core.EventType.THOUGHT.value else 140
+            ).name()
+            label = html.escape(self.core.EVENT_LABELS[event_type])
+            content = html.escape(str(entry.content)).replace("\n", "<br>")
+            alignment = (
+                "left"
+                if event_type == self.core.EventType.THOUGHT.value
+                else "right"
             )
-            content = self._history_content_for_display(entry)
-            cursor.insertText(
-                f"[{entry.timestamp}] {label}\n{content}\n\n",
-                text_format,
+            cursor.insertHtml(
+                f'<table width="100%" cellspacing="0" cellpadding="4"><tr>'
+                f'<td><table align="{alignment}" width="85%" cellspacing="0" '
+                f'cellpadding="8" bgcolor="{bubble}"><tr><td>'
+                f'<span style="color: {foreground}; font-weight: bold;">'
+                f'{label}</span><br><span style="color: {foreground};">'
+                f'{content}</span></td></tr></table></td></tr></table><br>'
             )
-
-    def _history_content_for_display(self, entry: Any) -> str:
-        event_type = getattr(entry.event_type, "value", entry.event_type)
-        content = str(entry.content)
-        first_line = content.partition("\n")[0]
-
-        if event_type == self.core.EventType.TOOL_CALL.value:
-            prefix = "Llamada a herramienta: "
-            if first_line.startswith(prefix):
-                tool_name = first_line[len(prefix):].strip()
-                if tool_name:
-                    return f"{prefix}{tool_name}\n..."
-            return "..."
-
-        if event_type == self.core.EventType.TOOL_RESULT.value:
-            if first_line.startswith("[") and first_line.endswith("] OK"):
-                return f"{first_line}\n..."
-            return "..."
-
-        if event_type == self.core.EventType.INFO.value:
-            if first_line.startswith("[") and first_line.endswith("] AVISO"):
-                return f"{first_line}\n..."
-
-
-        return content
-
-    def _is_command_execution_history_entry(self, entry: Any) -> bool:
-        event_type = getattr(entry.event_type, "value", entry.event_type)
-        if event_type == self.core.EventType.TOOL_CALL.value:
-            return "execute_command" in str(entry.content)
-        if event_type not in {
-            self.core.EventType.TOOL_RESULT.value,
-            self.core.EventType.INFO.value,
-        }:
-            return False
-        content = str(entry.content)
-        return content.startswith("[execute_command]") or "[execute_command] " in content
 
     def _refresh_context_bar(self) -> None:
         usage = self._context_usage.get(self.selected_task_id or -1)
@@ -1818,7 +1894,11 @@ class QtDashboard(QMainWindow):
             self.statusBar().showMessage("Escribe una instrucción antes de ejecutar.", 4000)
             return
         title = prompt.splitlines()[0][:80]
-        task = self.db.create_task(title=title, prompt=prompt)
+        task = self.db.create_task(
+            title=title,
+            prompt=prompt,
+            tool_profile=self.tool_profile_combo.currentText(),
+        )
         self.prompt_edit.clear()
         self._follow_active_task = True
         self._refresh_task_lists()
@@ -2187,7 +2267,7 @@ class QtDashboard(QMainWindow):
     def _open_settings(self) -> None:
         try:
             dialog = SettingsDialog(self.core, self)
-        except OSError as exc:
+        except (OSError, ValueError, configparser.Error) as exc:
             QMessageBox.critical(self, "Error de configuración", str(exc))
             return
         if dialog.exec() == QDialog.DialogCode.Accepted:

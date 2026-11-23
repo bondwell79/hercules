@@ -808,23 +808,52 @@ class GuiResponsivenessTests(unittest.TestCase):
     def test_history_updates_are_appended_not_redrawn(self) -> None:
         task = self.db.create_task("t", "p")
         self.window._select_task(task.id)
-        self.db.add_history(task.id, ga.EventType.INFO, "primera")
+        self.db.add_history(task.id, ga.EventType.THOUGHT, "primera")
         self.window.ui_queue.put({"type": "history_update", "task_id": task.id})
         self.window._poll_queue()
         self.assertIn("primera", self._history_text())
         with patch.object(self.window, "_select_task", side_effect=AssertionError("repintado completo")):
-            self.db.add_history(task.id, ga.EventType.INFO, "segunda")
+            self.db.add_history(task.id, ga.EventType.INFO, "evento oculto")
+            self.db.add_history(task.id, ga.EventType.FINAL_ANSWER, "segunda")
             self.window.ui_queue.put({"type": "history_update", "task_id": task.id})
             self.window._poll_queue()
         text = self._history_text()
         self.assertEqual(text.count("primera"), 1)
         self.assertEqual(text.count("segunda"), 1)
+        self.assertNotIn("evento oculto", text)
+
+    def test_history_scrolls_to_latest_bubble_after_new_entry(self) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        task = self.db.create_task("t", "p")
+        for i in range(30):
+            self.db.add_history(
+                task.id,
+                ga.EventType.THOUGHT,
+                f"pensamiento {i} " + ("detalle " * 40),
+            )
+        self.window.resize(1100, 800)
+        self.window.show()
+        self.window._select_task(task.id)
+        QApplication.processEvents()
+
+        scroll_bar = self.window.history_view.verticalScrollBar()
+        self.assertGreater(scroll_bar.maximum(), 0)
+        scroll_bar.setValue(0)
+        self.db.add_history(task.id, ga.EventType.FINAL_ANSWER, "Último mensaje")
+        self.window.ui_queue.put({"type": "history_update", "task_id": task.id})
+        self.window._poll_queue()
+        QApplication.processEvents()
+
+        self.assertEqual(scroll_bar.value(), scroll_bar.maximum())
+        self.assertIn("Último mensaje", self._history_text())
 
     def test_burst_of_events_is_coalesced_and_bounded(self) -> None:
         task = self.db.create_task("t", "p")
         self.window._select_task(task.id)
-        for i in range(2000):
+        for i in range(1999):
             self.db.add_history(task.id, ga.EventType.INFO, f"e{i}")
+        self.db.add_history(task.id, ga.EventType.FINAL_ANSWER, "e1999")
         for _ in range(2000):
             self.window.ui_queue.put({"type": "history_update", "task_id": task.id})
         calls: list = []

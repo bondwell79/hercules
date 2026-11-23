@@ -1,5 +1,6 @@
 """Headless Qt dashboard layout and JavaScript smoke tests."""
 
+import configparser
 import json
 import os
 import tempfile
@@ -49,6 +50,11 @@ class QtDashboardLayoutTests(unittest.TestCase):
     def setUp(self):
         self.workspace_dir = tempfile.TemporaryDirectory()
         workspace = Path(self.workspace_dir.name)
+        tools_config = workspace / "tools.ini"
+        tools_config.write_text(
+            "[global]\nread_file = true\n\n[creador_web]\nread_file = false\n",
+            encoding="utf-8",
+        )
         self.core = types.SimpleNamespace(
             CONFIG=hercules.CONFIG,
             CONFIG_PATH=hercules.CONFIG_PATH,
@@ -64,7 +70,9 @@ class QtDashboardLayoutTests(unittest.TestCase):
             EventType=hercules.EventType,
             EVENT_LABELS=hercules.EVENT_LABELS,
             Database=_EmptyDatabase,
-            ToolsRegistry=lambda: object(),
+            ToolsRegistry=lambda: types.SimpleNamespace(
+                profiles=lambda: ["global", "creador_web"]
+            ),
             LLMConnector=lambda: object(),
             PermissionManager=lambda _queue: object(),
             Agent=lambda *_args: types.SimpleNamespace(
@@ -75,6 +83,16 @@ class QtDashboardLayoutTests(unittest.TestCase):
             TaskOrchestrator=lambda *_args, **_kwargs: object(),
         )
         self.window = QtDashboard(self.core)
+
+    def test_prompt_panel_lists_configured_tool_profiles(self):
+        self.assertEqual(
+            [
+                self.window.tool_profile_combo.itemText(index)
+                for index in range(self.window.tool_profile_combo.count())
+            ],
+            ["global", "creador_web"],
+        )
+        self.assertEqual(self.window.tool_profile_combo.currentText(), "global")
 
     def tearDown(self):
         self.window.close()
@@ -682,7 +700,7 @@ class QtDashboardLayoutTests(unittest.TestCase):
             self.window.config.ui_final_answer_fg,
         )
 
-    def test_history_hides_tool_payloads_but_keeps_model_thoughts(self):
+    def test_history_shows_only_thoughts_and_final_answers_as_bubbles(self):
         events = [
             types.SimpleNamespace(
                 id=1,
@@ -711,6 +729,12 @@ class QtDashboardLayoutTests(unittest.TestCase):
                 timestamp="2026-10-15 12:00:03",
                 content="[browser_console] AVISO\nDetalle técnico privado",
             ),
+            types.SimpleNamespace(
+                id=5,
+                event_type=hercules.EventType.FINAL_ANSWER,
+                timestamp="2026-10-15 12:00:04",
+                content="Respuesta final para el usuario.",
+            ),
         ]
         task = types.SimpleNamespace(
             id=1,
@@ -725,38 +749,19 @@ class QtDashboardLayoutTests(unittest.TestCase):
 
         text = self.window.history_view.toPlainText()
         self.assertIn("El modelo explica su plan.", text)
-        self.assertIn("Llamada a herramienta: read_file", text)
-        self.assertIn("[read_file] OK", text)
-        self.assertIn("[browser_console] AVISO", text)
-        self.assertIn("...", text)
-        self.assertIn("...", text)
-        self.assertIn("...", text)
+        self.assertIn("Respuesta final para el usuario.", text)
+        self.assertIn("Pensamiento", text)
+        self.assertIn("Respuesta final", text)
+        self.assertNotIn("Respuesta final de prueba", text)
+        self.assertNotIn("Llamada a herramienta", text)
+        self.assertNotIn("[read_file] OK", text)
+        self.assertNotIn("[browser_console] AVISO", text)
         self.assertNotIn("secreto.txt", text)
         self.assertNotIn("Contenido privado del archivo", text)
         self.assertNotIn("Detalle técnico privado", text)
-
-    def test_command_execution_history_is_filtered(self):
-        command_call = types.SimpleNamespace(
-            event_type=hercules.EventType.TOOL_CALL,
-            content='Llamada a herramienta: execute_command\\nArgumentos: {"command": "echo prueba"}',
-        )
-        command_result = types.SimpleNamespace(
-            event_type=hercules.EventType.TOOL_RESULT,
-            content="[execute_command] OK\\nsalida del comando",
-        )
-        command_error = types.SimpleNamespace(
-            event_type=hercules.EventType.INFO,
-            content="[execute_command] AVISO\\ncomando bloqueado",
-        )
-        other_tool = types.SimpleNamespace(
-            event_type=hercules.EventType.TOOL_RESULT,
-            content="[read_file] OK\\ncontenido",
-        )
-
-        self.assertTrue(self.window._is_command_execution_history_entry(command_call))
-        self.assertTrue(self.window._is_command_execution_history_entry(command_result))
-        self.assertTrue(self.window._is_command_execution_history_entry(command_error))
-        self.assertFalse(self.window._is_command_execution_history_entry(other_tool))
+        rendered_html = self.window.history_view.toHtml()
+        self.assertIn("bgcolor", rendered_html)
+        self.assertIn("align=\"right\"", rendered_html)
 
     def test_webengine_executes_javascript(self):
         page_path = Path(self.workspace_dir.name) / "page with spaces.html"
@@ -841,10 +846,13 @@ class QtDashboardLayoutTests(unittest.TestCase):
         config = hercules.Config(str(config_path))
         subtasks_path = Path(self.workspace_dir.name) / "subtareas.ini"
         subtasks_path.write_text("[ANALIZAR]\\nprompt = Analiza\\n", encoding="utf-8")
+        tools_config_path = Path(self.workspace_dir.name) / "tools.ini"
         core = types.SimpleNamespace(
             CONFIG=config,
             SUBTAREAS_INI_PATH=str(subtasks_path),
+            TOOLS_INI_PATH=str(tools_config_path),
             Config=hercules.Config,
+            ToolsRegistry=hercules.ToolsRegistry,
             _scan_config_file=hercules._scan_config_file,
             _update_config_file=hercules._update_config_file,
             _HEX_COLOR_RE=hercules._HEX_COLOR_RE,
@@ -853,7 +861,7 @@ class QtDashboardLayoutTests(unittest.TestCase):
         dialog = SettingsDialog(core, self.window)
         self.addCleanup(dialog.close)
 
-        self.assertEqual(dialog.tabs.count(), len(config._parser.sections()) + 1)
+        self.assertEqual(dialog.tabs.count(), len(config._parser.sections()) + 2)
         self.assertNotIn("Workspace", dialog.SECTION_TITLES)
         self.assertNotIn("Database", dialog.SECTION_TITLES)
         self.assertNotIn("Database", [dialog.tabs.tabText(i) for i in range(dialog.tabs.count())])
@@ -892,6 +900,11 @@ class QtDashboardLayoutTests(unittest.TestCase):
         self.assertEqual(
             dialog.tabs.tabText(dialog.tabs.count() - 1),
             dialog.SUBTASKS_TAB_TITLE,
+        )
+        self.assertIn("read_file", dialog._tool_fields)
+        self.assertIn(
+            dialog.TOOLS_TAB_TITLE,
+            [dialog.tabs.tabText(index) for index in range(dialog.tabs.count())],
         )
         self.assertEqual(
             dialog.subtasks_edit.toPlainText(), "[ANALIZAR]\\nprompt = Analiza\\n"
@@ -941,6 +954,7 @@ class QtDashboardLayoutTests(unittest.TestCase):
             "[ANALIZAR]\\nprompt = Analiza la petición\\n\\n[IMPLEMENTAR]\\n"
             "prompt = Ejecuta el plan\\n"
         )
+        dialog._tool_fields["read_file"].setChecked(False)
         with patch("hercules_qt.QMessageBox.information"):
             dialog._save()
         saved_config = hercules.Config(str(config_path))
@@ -963,6 +977,9 @@ class QtDashboardLayoutTests(unittest.TestCase):
         self.assertIn("; Select local or HTTP mode", saved)
         self.assertIn("mode = http", saved)
         self.assertNotIn("continuación anterior", saved)
+        tools_parser = configparser.ConfigParser(interpolation=None)
+        tools_parser.read(tools_config_path, encoding="utf-8")
+        self.assertFalse(tools_parser.getboolean("global", "read_file"))
 
     def test_configuration_sections_are_not_migrated(self):
         config_path = Path(self.workspace_dir.name) / "old-config.ini"

@@ -94,6 +94,57 @@ class ParallelTaskTests(unittest.TestCase):
         assert updated is not None
         return updated
 
+    def test_parallel_child_inherits_parent_tool_profile(self) -> None:
+        parent = self.db.create_task(
+            title="padre",
+            prompt="coordina",
+            tool_profile="creador_web",
+        )
+        agent = self.make_agent(FakeLLM({}))
+
+        with patch.object(
+            agent.parallel,
+            "_execute",
+            side_effect=lambda run, _root_id: run.done.set(),
+        ):
+            child = agent.parallel.spawn(parent.id, "trabajo paralelo")
+            self.assertTrue(agent.parallel.wait_all(2))
+
+        self.assertEqual(child.tool_profile, "creador_web")
+        self.assertEqual(self.db.get_task(child.id).tool_profile, "creador_web")
+
+        orchestrator = ga.TaskOrchestrator(self.db, None, self.ui_queue)
+        subtask = orchestrator._create_subtask(
+            parent.id,
+            attempt=0,
+            prompt="trabajo por etapas",
+            name="IMPLEMENTAR",
+        )
+        self.assertEqual(subtask.tool_profile, "creador_web")
+        self.assertEqual(self.db.get_task(subtask.id).tool_profile, "creador_web")
+
+    def test_agent_announces_profile_overrides_and_global_fallbacks(self) -> None:
+        tools_config = Path(self.tmp.name) / "tools.ini"
+        tools_config.write_text(
+            "[global]\nread_file = true\nwrite_file = false\n\n"
+            "[creador_web]\nread_file = false\n",
+            encoding="utf-8",
+        )
+        llm = FakeLLM({"[PROFILE]": lambda _messages, _tools: _message("hecho")})
+        agent = self.make_agent(llm)
+        agent.tools = ga.ToolsRegistry(str(tools_config))
+        task = self.db.create_task(
+            title="perfil",
+            prompt="[PROFILE] tarea",
+            tool_profile="creador_web",
+        )
+
+        agent.run(task)
+
+        self.assertNotIn("read_file", llm.tools_seen["[PROFILE]"])
+        self.assertNotIn("write_file", llm.tools_seen["[PROFILE]"])
+        self.assertIn("edit_file", llm.tools_seen["[PROFILE]"])
+
     @staticmethod
     def parent_script(*child_prompts: str, final: str = "listo") -> Callable[..., Dict[str, Any]]:
         """Primero lanza una tarea paralela por prompt y luego responde."""

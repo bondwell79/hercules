@@ -79,6 +79,7 @@ def _app_path(value: str) -> str:
 
 
 CONFIG_PATH = os.environ.get("HERCULES_CONFIG") or _app_path("config.ini")
+TOOLS_INI_PATH = _app_path("tools.ini")
 VERSION = "2.1"
 SUBTAREAS_INI_PATH = os.environ.get("HERCULES_SUBTAREAS_INI") or _app_path("subtareas.ini")
 
@@ -1217,6 +1218,7 @@ class Task:
     parent_task_id: Optional[int] = None
     attempt_number: int = 0
     subtask_name: Optional[str] = None
+    tool_profile: str = "global"
 
 
 @dataclass
@@ -1494,6 +1496,7 @@ class Database:
                     parent_task_id  INTEGER,
                     attempt_number  INTEGER NOT NULL DEFAULT 0,
                     subtask_name    TEXT,
+                    tool_profile    TEXT    NOT NULL DEFAULT 'global',
                     FOREIGN KEY (parent_task_id) REFERENCES tasks(id) ON DELETE CASCADE
                 );
 
@@ -1519,6 +1522,9 @@ class Database:
                 conn, "tasks", "attempt_number", "INTEGER NOT NULL DEFAULT 0"
             )
             self._migrate_add_column_if_missing(conn, "tasks", "subtask_name", "TEXT")
+            self._migrate_add_column_if_missing(
+                conn, "tasks", "tool_profile", "TEXT NOT NULL DEFAULT 'global'"
+            )
 
     @staticmethod
     def _migrate_add_column_if_missing(
@@ -1542,14 +1548,15 @@ class Database:
         parent_task_id: Optional[int] = None,
         attempt_number: int = 0,
         subtask_name: Optional[str] = None,
+        tool_profile: str = "global",
     ) -> Task:
         now = datetime.now(UTC).isoformat(timespec="seconds")
         with self._lock, self._connect() as conn:
             cur = conn.execute(
                 "INSERT INTO tasks "
                 "(title, prompt, status, created_at, updated_at, "
-                " parent_task_id, attempt_number, subtask_name) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                " parent_task_id, attempt_number, subtask_name, tool_profile) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     title,
                     prompt,
@@ -1559,6 +1566,7 @@ class Database:
                     parent_task_id,
                     attempt_number,
                     subtask_name,
+                    tool_profile,
                 ),
             )
             task_id = cur.lastrowid
@@ -1572,6 +1580,7 @@ class Database:
             parent_task_id=parent_task_id,
             attempt_number=attempt_number,
             subtask_name=subtask_name,
+            tool_profile=tool_profile,
         )
 
     def update_task_status(
@@ -1659,6 +1668,11 @@ class Database:
             parent_task_id=row["parent_task_id"],
             attempt_number=row["attempt_number"] or 0,
             subtask_name=row["subtask_name"] if "subtask_name" in row.keys() else None,
+            tool_profile=(
+                row["tool_profile"]
+                if "tool_profile" in row.keys() and row["tool_profile"]
+                else "global"
+            ),
         )
 
     def delete_tasks_by_status(self, statuses: List[TaskStatus]) -> int:
@@ -3179,9 +3193,53 @@ class WorkspaceHTTPServer:
 class ToolsRegistry:
     """Registro central de herramientas disponibles para el agente."""
 
-    def __init__(self) -> None:
+    def __init__(self, config_path: str = TOOLS_INI_PATH) -> None:
         self._tools: Dict[str, ToolDefinition] = {}
+        (
+            self.global_section,
+            self._global_enabled,
+            self._profile_overrides,
+        ) = self._load_tool_profiles(config_path)
         self._register_defaults()
+
+    @staticmethod
+    def _load_tool_profiles(
+        config_path: str,
+    ) -> Tuple[str, Dict[str, bool], Dict[str, Dict[str, bool]]]:
+        path = Path(config_path)
+        if not path.exists():
+            return "global", {}, {}
+        parser = configparser.ConfigParser(interpolation=None)
+        try:
+            with path.open(encoding="utf-8") as config_file:
+                parser.read_file(config_file)
+        except (configparser.Error, OSError, UnicodeDecodeError) as exc:
+            raise ValueError(
+                f"No se pudo leer la configuración de herramientas: {exc}"
+            ) from exc
+        global_section = "global" if parser.has_section("global") else "tools"
+        if not parser.has_section(global_section):
+            raise ValueError(f"El fichero {path} debe contener una sección [global].")
+
+        def read_section(section: str) -> Dict[str, bool]:
+            values: Dict[str, bool] = {}
+            for name, value in parser.items(section):
+                try:
+                    values[name] = parser.getboolean(section, name)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Valor inválido para la herramienta '{name}' en "
+                        f"[{section}] de {path}: {value!r}"
+                    ) from exc
+            return values
+
+        global_enabled = read_section(global_section)
+        profile_overrides = {
+            section: read_section(section)
+            for section in parser.sections()
+            if section != global_section
+        }
+        return global_section, global_enabled, profile_overrides
 
     def _register_defaults(self) -> None:
         self.register(
@@ -3693,17 +3751,54 @@ class ToolsRegistry:
     def register(self, tool: ToolDefinition) -> None:
         self._tools[tool.name] = tool
 
-    def get(self, name: str) -> Optional[ToolDefinition]:
+    def get(
+        self,
+        name: str,
+        profile: str = "global",
+    ) -> Optional[ToolDefinition]:
+        if not self.is_enabled(name, profile):
+            return None
         return self._tools.get(name)
 
-    def all(self) -> List[ToolDefinition]:
+    def all(self, profile: str = "global") -> List[ToolDefinition]:
+        return [
+            tool
+            for tool in self._tools.values()
+            if self.is_enabled(tool.name, profile)
+        ]
+
+    def all_registered(self) -> List[ToolDefinition]:
+        """Devuelve todas las herramientas, incluidas las desactivadas."""
         return list(self._tools.values())
 
-    def to_openai_tools(self, exclude: Iterable[str] = ()) -> List[Dict[str, Any]]:
+    def profiles(self) -> List[str]:
+        """Perfiles disponibles; el global se incluye siempre al principio."""
+        return ["global", *self._profile_overrides]
+
+    def is_enabled(self, name: str, profile: str = "global") -> bool:
+        if name not in self._tools:
+            return False
+        if profile == "global":
+            overrides = self._global_enabled
+        else:
+            try:
+                overrides = self._profile_overrides[profile]
+            except KeyError as exc:
+                raise ValueError(f"Perfil de herramientas desconocido: {profile}") from exc
+        return overrides.get(name, self._global_enabled.get(name, True))
+
+    def is_registered(self, name: str) -> bool:
+        return name in self._tools
+
+    def to_openai_tools(
+        self,
+        exclude: Iterable[str] = (),
+        profile: str = "global",
+    ) -> List[Dict[str, Any]]:
         """Convierte el registro al formato OpenAI/Ollama de tools."""
         excluded = set(exclude)
         out: List[Dict[str, Any]] = []
-        for t in self.all():
+        for t in self.all(profile):
             if t.name in excluded:
                 continue
             out.append(
@@ -3974,6 +4069,8 @@ class ParallelTaskManager:
         """Crea la tarea hija y la lanza en segundo plano sin bloquear."""
         agent = self._agent
         root_id = self._root_id(spawner_id)
+        spawner = agent.db.get_task(spawner_id)
+        tool_profile = spawner.tool_profile if spawner is not None else "global"
         run: Optional[_ParallelRun] = None
         with self._lock:
             # La numeración sale de la BD, así no hay contadores que acumular.
@@ -3988,6 +4085,7 @@ class ParallelTaskManager:
                 prompt=prompt,
                 parent_task_id=root_id,
                 subtask_name=name,
+                tool_profile=tool_profile,
             )
             assert task.id is not None
             run = _ParallelRun(task, threading.Event(), threading.Event())
@@ -4650,9 +4748,19 @@ class Agent:
         call: ToolCall,
         cancel_event: Optional[threading.Event] = None,
     ) -> ToolResult:
-        tool = self.tools.get(call.name)
+        task = self.db.get_task(task_id)
+        tool_profile = task.tool_profile if task is not None else "global"
+        tool = self.tools.get(call.name, tool_profile)
         if tool is None:
-            msg = f"ERROR: herramienta desconocida '{call.name}'"
+            if self.tools.is_registered(call.name) and not self.tools.is_enabled(
+                call.name, tool_profile
+            ):
+                msg = (
+                    f"DENEGADO: la herramienta '{call.name}' está desactivada "
+                    f"en el perfil '{tool_profile}' y no se puede ejecutar"
+                )
+            else:
+                msg = f"ERROR: herramienta desconocida '{call.name}'"
             self._log(task_id, EventType.ERROR, msg)
             return ToolResult(call.id, call.name, False, msg)
 
@@ -4918,7 +5026,8 @@ class Agent:
                 PARALLEL_TOOLS
                 if self.parallel.is_parallel_task(task_id)
                 else ()
-            )
+            ),
+            profile=task.tool_profile,
         )
         schema_chars = len(json.dumps(tools_schema, ensure_ascii=False, default=str))
         llm_kwargs: Dict[str, Any] = {}
@@ -5206,7 +5315,11 @@ class Agent:
                         self._log(task_id, EventType.INFO, "Tarea abortada por el usuario.")
                         self._set_status(task_id, TaskStatus.CANCELLED)
                         return
-                    result = self._execute_tool_call(task_id, tc, cancel_event=cancel_event)
+                    result = self._execute_tool_call(
+                        task_id,
+                        tc,
+                        cancel_event=cancel_event,
+                    )
                     messages.append(
                         {
                             "role": "tool",
@@ -5422,6 +5535,7 @@ class TaskOrchestrator:
         if attempt > 0:
             title_prefix += f" (intento {attempt + 1})"
         title = f"{title_prefix} #{parent_id}"
+        parent = self.db.get_task(parent_id)
 
         task = self.db.create_task(
             title=title,
@@ -5429,6 +5543,7 @@ class TaskOrchestrator:
             parent_task_id=parent_id,
             attempt_number=attempt,
             subtask_name=subtask_name,
+            tool_profile=parent.tool_profile if parent is not None else "global",
         )
         self._log_parent(
             parent_id,

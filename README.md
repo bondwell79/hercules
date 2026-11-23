@@ -141,6 +141,8 @@ Usar el script `run.bat`, que activa el entorno virtual y lanza `hercules.py`.
 
 El fichero `config.ini` ya viene incluido con valores por defecto; edítalo para ajustar la ruta del modelo GGUF, el modo del LLM (`local` / `http`) y otros parámetros. En el menú de configuración puedes cambiar el tema, la pantalla completa y la tipografía, y comprobarlos en la vista previa de Interfaz.
 
+El fichero `tools.ini` permite definir herramientas globales en `[global]` y perfiles adicionales, por ejemplo `[creador_web]`. Cada sección acepta valores `true` / `false`; un perfil solo necesita incluir las herramientas que sobrescribe y hereda las demás de `[global]`. La pestaña **Herramientas** permite ajustar los valores globales. El perfil para cada tarea se elige en el desplegable bajo el prompt. Las herramientas desactivadas no se anuncian al modelo y cualquier intento de ejecución se deniega. Los cambios de configuración se aplican al reiniciar Hercules.
+
 El fichero `subtareas.ini` es la única definición del plan de trabajo del agente: cada sección en orden que tenga un `prompt` crea una subtarea con ese nombre. Puedes añadir, quitar, renombrar o reordenar fases libremente; usa `{user_prompt}` para incluir la petición original y `{NOMBRE_SECCION}` para insertar la salida de una subtarea anterior. No hay fases especiales ni plan predeterminado: si falta el fichero o no define subtareas válidas, el programa no ejecuta ninguna subtarea. El plan distribuido incluye una etapa inicial `EJECUTAR`, configurable sin restricciones.
 
 El `[Agent]` de `config.ini` permite ajustar límites y robustez: `max_parallel_tasks`

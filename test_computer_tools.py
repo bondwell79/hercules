@@ -94,6 +94,82 @@ class ToolTests(unittest.TestCase):
             tools["run_http_server"].parameters["additionalProperties"]
         )
 
+    def test_tools_ini_filters_announcements_and_denies_disabled_execution(self) -> None:
+        tools_config = self.workspace / "tools.ini"
+        tools_config.write_text(
+            "[tools]\nread_file = false\n",
+            encoding="utf-8",
+        )
+        registry = hercules.ToolsRegistry(str(tools_config))
+
+        self.assertIsNone(registry.get("read_file"))
+        self.assertNotIn("read_file", [tool.name for tool in registry.all()])
+        self.assertNotIn(
+            "read_file",
+            [
+                item["function"]["name"]
+                for item in registry.to_openai_tools()
+            ],
+        )
+
+        agent = hercules.Agent.__new__(hercules.Agent)
+        agent.db = Mock()
+        agent.db.get_task.return_value = None
+        agent.tools = registry
+        agent._log = Mock()
+        result = agent._execute_tool_call(
+            1,
+            hercules.ToolCall("call-1", "read_file", {"path": "sample.txt"}),
+        )
+        self.assertFalse(result.success)
+        self.assertIn("DENEGADO", result.output)
+        self.assertIn("perfil 'global'", result.output)
+
+    def test_tools_ini_rejects_invalid_boolean_values(self) -> None:
+        tools_config = self.workspace / "tools.ini"
+        tools_config.write_text("[tools]\nread_file = enabled\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "Valor inválido"):
+            hercules.ToolsRegistry(str(tools_config))
+
+    def test_tool_profiles_override_global_and_inherit_unlisted_tools(self) -> None:
+        tools_config = self.workspace / "tools.ini"
+        tools_config.write_text(
+            "[global]\n"
+            "read_file = true\n"
+            "write_file = false\n\n"
+            "[creador_web]\n"
+            "read_file = false\n",
+            encoding="utf-8",
+        )
+        registry = hercules.ToolsRegistry(str(tools_config))
+
+        self.assertEqual(registry.profiles(), ["global", "creador_web"])
+        self.assertTrue(registry.is_enabled("read_file", "global"))
+        self.assertFalse(registry.is_enabled("read_file", "creador_web"))
+        self.assertFalse(registry.is_enabled("write_file", "creador_web"))
+        self.assertNotIn(
+            "read_file",
+            [
+                item["function"]["name"]
+                for item in registry.to_openai_tools(profile="creador_web")
+            ],
+        )
+
+        agent = hercules.Agent.__new__(hercules.Agent)
+        agent.db = Mock()
+        agent.db.get_task.return_value = types.SimpleNamespace(
+            tool_profile="creador_web"
+        )
+        agent.tools = registry
+        agent._log = Mock()
+        result = agent._execute_tool_call(
+            1,
+            hercules.ToolCall("call-2", "read_file", {"path": "sample.txt"}),
+        )
+        self.assertFalse(result.success)
+        self.assertIn("creador_web", result.output)
+
     def test_desktop_tools_warn_against_integrated_browser_usage(self) -> None:
         default_prompt = hercules.Config.DEFAULTS["Agent"]["system_prompt"]
         self.assertIn("navegador integrado", default_prompt)
@@ -314,6 +390,7 @@ class ToolTests(unittest.TestCase):
             )
         )
         agent = hercules.Agent(Mock(), Mock(), registry, Mock(), Mock())
+        agent.db.get_task.return_value = None
 
         with patch.object(agent, "_log"):
             result = agent._execute_tool_call(
@@ -343,6 +420,7 @@ class ToolTests(unittest.TestCase):
             )
         )
         agent = hercules.Agent(Mock(), Mock(), registry, Mock(), Mock())
+        agent.db.get_task.return_value = None
 
         with patch.object(agent, "_log"):
             result = agent._execute_tool_call(
