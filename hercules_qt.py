@@ -1839,10 +1839,19 @@ class QtDashboard(QMainWindow):
         return {
             et.THOUGHT.value: "ui_thought_fg",
             et.FINAL_ANSWER.value: "ui_final_answer_fg",
+            et.ERROR.value: "ui_error_fg",
+            et.CONTEXT_COMPACTED.value: "ui_context_compacted_fg",
+            et.CONTEXT_OVERFLOW.value: "ui_context_overflow_fg",
         }
 
     def _append_history_entries(self, task_id: int, entries: Any) -> None:
         colors = self._history_colors()
+        et = self.core.EventType
+        red_bubble_types = {
+            et.ERROR.value,
+            et.CONTEXT_COMPACTED.value,
+            et.CONTEXT_OVERFLOW.value,
+        }
         cursor = QTextCursor(self.history_view.document())
         cursor.movePosition(QTextCursor.MoveOperation.End)
         for entry in entries:
@@ -1855,14 +1864,23 @@ class QtDashboard(QMainWindow):
 
             color_key = colors[event_type]
             foreground = QColor(getattr(self.config, color_key)).name()
-            bubble = QColor(self.config.ui_history_bg).lighter(
-                125 if event_type == self.core.EventType.THOUGHT.value else 140
-            ).name()
+            if event_type in red_bubble_types:
+                background = QColor(self.config.ui_history_bg)
+                red = QColor("#b34444")
+                bubble = QColor.fromRgb(
+                    round(background.red() * 0.72 + red.red() * 0.28),
+                    round(background.green() * 0.72 + red.green() * 0.28),
+                    round(background.blue() * 0.72 + red.blue() * 0.28),
+                ).name()
+            else:
+                bubble = QColor(self.config.ui_history_bg).lighter(
+                    125 if event_type == et.THOUGHT.value else 140
+                ).name()
             label = html.escape(self.core.EVENT_LABELS[event_type])
             content = html.escape(str(entry.content)).replace("\n", "<br>")
             alignment = (
                 "left"
-                if event_type == self.core.EventType.THOUGHT.value
+                if event_type == et.THOUGHT.value
                 else "right"
             )
             cursor.insertHtml(

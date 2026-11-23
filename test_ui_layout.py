@@ -17,7 +17,7 @@ os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu --no-sandbox"
 import hercules
 from hercules_qt import BrowserToolBridge, QtDashboard, SettingsDialog, _is_within_workspace
 from PySide6.QtCore import QEvent, QEventLoop, QTimer, QUrl, Qt
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QColor, QKeyEvent
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PySide6.QtWidgets import (
     QApplication,
@@ -700,7 +700,7 @@ class QtDashboardLayoutTests(unittest.TestCase):
             self.window.config.ui_final_answer_fg,
         )
 
-    def test_history_shows_only_thoughts_and_final_answers_as_bubbles(self):
+    def test_history_shows_selected_events_as_bubbles(self):
         events = [
             types.SimpleNamespace(
                 id=1,
@@ -735,6 +735,24 @@ class QtDashboardLayoutTests(unittest.TestCase):
                 timestamp="2026-10-15 12:00:04",
                 content="Respuesta final para el usuario.",
             ),
+            types.SimpleNamespace(
+                id=6,
+                event_type=hercules.EventType.ERROR,
+                timestamp="2026-10-15 12:00:05",
+                content="Error al completar la tarea.",
+            ),
+            types.SimpleNamespace(
+                id=7,
+                event_type=hercules.EventType.CONTEXT_COMPACTED,
+                timestamp="2026-10-15 12:00:06",
+                content="Se compactó el contexto.",
+            ),
+            types.SimpleNamespace(
+                id=8,
+                event_type=hercules.EventType.CONTEXT_OVERFLOW,
+                timestamp="2026-10-15 12:00:07",
+                content="El contexto superó el límite.",
+            ),
         ]
         task = types.SimpleNamespace(
             id=1,
@@ -750,6 +768,9 @@ class QtDashboardLayoutTests(unittest.TestCase):
         text = self.window.history_view.toPlainText()
         self.assertIn("El modelo explica su plan.", text)
         self.assertIn("Respuesta final para el usuario.", text)
+        self.assertIn("Error al completar la tarea.", text)
+        self.assertIn("Se compactó el contexto.", text)
+        self.assertIn("El contexto superó el límite.", text)
         self.assertIn("Pensamiento", text)
         self.assertIn("Respuesta final", text)
         self.assertNotIn("Respuesta final de prueba", text)
@@ -762,6 +783,14 @@ class QtDashboardLayoutTests(unittest.TestCase):
         rendered_html = self.window.history_view.toHtml()
         self.assertIn("bgcolor", rendered_html)
         self.assertIn("align=\"right\"", rendered_html)
+        background = QColor(self.window.config.ui_history_bg)
+        red = QColor("#b34444")
+        red_bubble = QColor.fromRgb(
+            round(background.red() * 0.72 + red.red() * 0.28),
+            round(background.green() * 0.72 + red.green() * 0.28),
+            round(background.blue() * 0.72 + red.blue() * 0.28),
+        ).name()
+        self.assertEqual(rendered_html.count(f'bgcolor="{red_bubble}"'), 3)
 
     def test_webengine_executes_javascript(self):
         page_path = Path(self.workspace_dir.name) / "page with spaces.html"
