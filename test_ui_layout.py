@@ -1,13 +1,14 @@
 """Headless Qt dashboard layout and JavaScript smoke tests."""
 
 import configparser
+import io
 import json
 import os
 import tempfile
 import threading
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, Mock, patch
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -186,7 +187,7 @@ class QtDashboardLayoutTests(unittest.TestCase):
         self.window._register_browser_tools()
 
         expected = {
-            "browser_navigate", "browser_snapshot", "browser_click", "browser_fill",
+            "browser_navigate", "browser_fetch", "browser_snapshot", "browser_click", "browser_fill",
             "browser_scroll", "browser_press_key", "browser_screenshot", "browser_back",
             "browser_forward", "browser_reload", "browser_console",
         }
@@ -197,6 +198,140 @@ class QtDashboardLayoutTests(unittest.TestCase):
             self.assertEqual(registry.tools[name].risk, hercules.RiskLevel.SAFE)
         self.assertIn("code", registry.tools["browser_console"].parameters["properties"])
         self.assertEqual(registry.tools["browser_console"].parameters["required"], [])
+        self.assertEqual(registry.tools["browser_fetch"].parameters["required"], [])
+        self.assertEqual(
+            set(registry.tools["browser_fetch"].parameters["properties"]),
+            {"url", "path", "offset"},
+        )
+
+    def test_browser_fetch_captures_current_html_and_saves_full_content(self):
+        bridge = BrowserToolBridge(self.window)
+        completed = threading.Event()
+        response = {}
+        callbacks = []
+        content = "<html>" + ("x" * 50_010) + "</html>"
+        with patch.object(
+            self.window.web_view.page(),
+            "runJavaScript",
+            side_effect=lambda script, callback: callbacks.append((script, callback)),
+        ):
+            bridge._execute(("fetch", {"path": "captures/page.html"}, completed, response))
+
+        self.assertIn("outerHTML", callbacks[0][0])
+        callbacks[0][1](content)
+
+        saved = self.window.workspace / "captures" / "page.html"
+        self.assertTrue(completed.is_set())
+        self.assertEqual(saved.read_text(encoding="utf-8"), content)
+        self.assertIn(content[:50_000], response["result"])
+        self.assertNotIn(content[50_000:], response["result"])
+        self.assertIn("Contenido truncado a 50000 caracteres", response["result"])
+
+    def test_browser_fetch_applies_offset_to_current_html(self):
+        bridge = BrowserToolBridge(self.window)
+        completed = threading.Event()
+        response = {}
+        callbacks = []
+        with patch.object(
+            self.window.web_view.page(),
+            "runJavaScript",
+            side_effect=lambda script, callback: callbacks.append((script, callback)),
+        ):
+            bridge._execute(("fetch", {"offset": 3}, completed, response))
+
+        self.assertIn("count < 3", callbacks[0][0])
+        callbacks[0][1]("3456789")
+
+        self.assertTrue(completed.is_set())
+        self.assertIn("3456789", response["result"])
+        self.assertNotIn("012", response["result"])
+
+    def test_browser_fetch_rejects_negative_offset(self):
+        bridge = BrowserToolBridge(self.window)
+        completed = threading.Event()
+        response = {}
+        bridge._execute(("fetch", {"offset": -1}, completed, response))
+
+        self.assertTrue(completed.is_set())
+        self.assertIn("offset debe ser un entero no negativo", response["result"])
+
+    def test_browser_fetch_rejects_output_path_outside_workspace(self):
+        bridge = BrowserToolBridge(self.window)
+        completed = threading.Event()
+        response = {}
+        callbacks = []
+        with patch.object(
+            self.window.web_view.page(),
+            "runJavaScript",
+            side_effect=lambda script, callback: callbacks.append(callback),
+        ):
+            bridge._execute(("fetch", {"path": "..\\outside.html"}, completed, response))
+        callbacks[0]("<html></html>")
+
+        self.assertTrue(completed.is_set())
+        self.assertIn("dentro del workspace", response["result"])
+
+    def test_browser_fetch_downloads_url_and_saves_raw_response(self):
+        bridge = BrowserToolBridge(self.window)
+        completed = threading.Event()
+        response = {}
+        raw_content = b"<html>caf\xc3\xa9</html>"
+        page = MagicMock()
+        page.__enter__.return_value = page
+        page.read.return_value = raw_content
+        page.headers.get_content_charset.return_value = "utf-8"
+
+        with patch("hercules_qt.urllib.request.urlopen", return_value=page) as urlopen:
+            bridge._execute((
+                "fetch",
+                {
+                    "url": "https://example.test/page",
+                    "path": "raw.html",
+                    "offset": 6,
+                },
+                completed,
+                response,
+            ))
+            self.assertTrue(completed.wait(2))
+
+        urlopen.assert_called_once()
+        self.assertEqual(page.read.call_count, 1)
+        self.assertEqual(
+            (self.window.workspace / "raw.html").read_bytes(),
+            raw_content,
+        )
+        self.assertIn("café</html>", response["result"])
+        self.assertNotIn("<html>", response["result"])
+
+    def test_browser_fetch_applies_offset_when_streaming_url_without_file(self):
+        bridge = BrowserToolBridge(self.window)
+        completed = threading.Event()
+        response = {}
+
+        class Response(io.BytesIO):
+            def __init__(self, content):
+                super().__init__(content)
+                self.headers = Mock()
+                self.headers.get_content_charset.return_value = "utf-8"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                self.close()
+
+        page = Response(b"0123456789")
+        with patch("hercules_qt.urllib.request.urlopen", return_value=page):
+            bridge._execute((
+                "fetch",
+                {"url": "https://example.test/page", "offset": 3},
+                completed,
+                response,
+            ))
+            self.assertTrue(completed.wait(2))
+
+        self.assertIn("3456789", response["result"])
+        self.assertNotIn("012", response["result"])
 
     def test_browser_snapshot_assigns_interactive_refs(self):
         bridge = BrowserToolBridge(self.window)

@@ -64,6 +64,7 @@ class ToolTests(unittest.TestCase):
             "wait_parallel_task": hercules.RiskLevel.SAFE,
             "run_http_server": hercules.RiskLevel.SAFE,
             "browser_navigate": hercules.RiskLevel.SAFE,
+            "browser_fetch": hercules.RiskLevel.SAFE,
             "browser_snapshot": hercules.RiskLevel.SAFE,
             "browser_console": hercules.RiskLevel.SAFE,
             "browser_click": hercules.RiskLevel.SAFE,

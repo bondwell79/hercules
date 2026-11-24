@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import configparser
 import html
+import io
 import json
 import logging
 import math
@@ -11,6 +12,7 @@ import queue
 import threading
 import time
 import traceback
+import urllib.request
 from collections import deque
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -80,6 +82,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 
 APPROVAL_DISPLAY_MAX_CHARS = 255
 DEFAULT_BROWSER_URL = "https://bondwell79.github.io/hercules/welcome.html"
+BROWSER_FETCH_MAX_CHARS = 50_000
 
 
 def _is_within_workspace(path: Path, workspace: Path) -> bool:
@@ -214,6 +217,9 @@ class BrowserToolBridge(QObject):
                 response["result"] = f"Acción del navegador ejecutada: {action}"
             elif action == "screenshot":
                 response["result"] = self._screenshot(arguments.get("path"))
+            elif action == "fetch":
+                self._fetch(arguments, completed, response)
+                return
             elif action == "scroll":
                 self._scroll(arguments, completed, response)
                 return
@@ -265,6 +271,163 @@ class BrowserToolBridge(QObject):
             Qt.ConnectionType.SingleShotConnection,
         )
         self.dashboard.web_view.setUrl(url)
+
+    def _fetch(
+        self,
+        arguments: Dict[str, Any],
+        completed: threading.Event,
+        response: Dict[str, str],
+    ) -> None:
+        raw_url = arguments.get("url")
+        if raw_url is not None and not isinstance(raw_url, str):
+            raise ValueError("url debe ser una cadena")
+        url = raw_url.strip() if isinstance(raw_url, str) else ""
+        raw_path = arguments.get("path")
+        if raw_path is not None and not isinstance(raw_path, str):
+            raise ValueError("path debe ser una cadena")
+        path = raw_path.strip() if isinstance(raw_path, str) else ""
+        offset = arguments.get("offset", 0)
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("offset debe ser un entero no negativo")
+
+        if url:
+            parsed = urlparse(url)
+            if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+                raise ValueError("url debe ser una URL HTTP(S) válida")
+
+            def _fetch_remote() -> None:
+                try:
+                    request = urllib.request.Request(
+                        url,
+                        headers={"User-Agent": "Hercules browser_fetch"},
+                    )
+                    with urllib.request.urlopen(request, timeout=25) as page:
+                        charset = page.headers.get_content_charset() or "utf-8"
+                        if path:
+                            raw_content = page.read()
+                            content = raw_content.decode(charset, errors="replace")
+                            content_offset = offset
+                        else:
+                            raw_content = b""
+                            text_stream = io.TextIOWrapper(
+                                page, encoding=charset, errors="replace"
+                            )
+                            remaining = offset
+                            while remaining:
+                                skipped = text_stream.read(min(remaining, 8192))
+                                if not skipped:
+                                    break
+                                remaining -= len(skipped)
+                            content = text_stream.read(BROWSER_FETCH_MAX_CHARS + 1)
+                            content_offset = 0
+                    self._complete_fetch(
+                        completed,
+                        response,
+                        content,
+                        raw_content,
+                        url,
+                        path,
+                        content_offset,
+                    )
+                except Exception as exc:
+                    self._finish(completed, response, f"ERROR al capturar {url}: {exc}")
+
+            threading.Thread(
+                target=_fetch_remote,
+                name="browser-fetch",
+                daemon=True,
+            ).start()
+            return
+
+        source_expression = (
+            "document.documentElement ? document.documentElement.outerHTML : ''"
+        )
+        content_offset = offset
+        if not path:
+            source_expression = (
+                "(() => {"
+                "const source = document.documentElement "
+                "? document.documentElement.outerHTML : '';"
+                "let start = 0, count = 0;"
+                f"while (start < source.length && count < {offset}) {{"
+                "start += source.codePointAt(start) > 0xFFFF ? 2 : 1;"
+                "count++;}"
+                "let end = start; count = 0;"
+                f"while (end < source.length && count < {BROWSER_FETCH_MAX_CHARS + 1}) {{"
+                "end += source.codePointAt(end) > 0xFFFF ? 2 : 1;"
+                "count++;}"
+                "return source.slice(start, end);"
+                "})()"
+            )
+            content_offset = 0
+        self.dashboard.web_view.page().runJavaScript(
+            source_expression,
+            lambda content: self._complete_current_fetch(
+                completed, response, content, path, content_offset
+            ),
+        )
+
+    def _complete_current_fetch(
+        self,
+        completed: threading.Event,
+        response: Dict[str, str],
+        content: Any,
+        path: str,
+        offset: int,
+    ) -> None:
+        if not isinstance(content, str):
+            self._finish(completed, response, "ERROR: no se pudo capturar el HTML de la página actual")
+            return
+        url = self.dashboard.web_view.url().toString()
+        raw_content = content.encode("utf-8")
+        try:
+            self._complete_fetch(
+                completed, response, content, raw_content, url, path, offset
+            )
+        except Exception as exc:
+            self._finish(completed, response, f"ERROR al capturar {url}: {exc}")
+
+    def _complete_fetch(
+        self,
+        completed: threading.Event,
+        response: Dict[str, str],
+        content: str,
+        raw_content: bytes,
+        url: str,
+        raw_path: str,
+        offset: int,
+    ) -> None:
+        output = [f"URL: {url}"]
+        if raw_path:
+            path = Path(raw_path).expanduser()
+            if not path.is_absolute():
+                path = self.dashboard.workspace / path
+            path = path.resolve()
+            if not _is_within_workspace(path, self.dashboard.workspace):
+                raise ValueError("la captura debe guardarse dentro del workspace")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw_content)
+            output.append(f"Captura completa guardada en: {path}")
+
+        selected_content = content[offset : offset + BROWSER_FETCH_MAX_CHARS + 1]
+        truncated = len(content) > offset + BROWSER_FETCH_MAX_CHARS
+        output.append(selected_content[:BROWSER_FETCH_MAX_CHARS])
+        if truncated:
+            saved_message = (
+                "La captura completa se guardó en el archivo."
+                if raw_path
+                else "No se guardó un archivo."
+            )
+            output.append(
+                f"[Contenido truncado a {BROWSER_FETCH_MAX_CHARS} caracteres. "
+                f"{saved_message}]"
+            )
+        self._finish(
+            completed,
+            response,
+            "\n".join(output),
+            max_chars=BROWSER_FETCH_MAX_CHARS + 4096,
+        )
 
     def _snapshot(
         self,
@@ -657,8 +820,13 @@ class BrowserToolBridge(QObject):
         return f"Captura de pantalla guardada en: {path} ({image.width()}x{image.height()})"
 
     @staticmethod
-    def _finish(completed: threading.Event, response: Dict[str, str], result: str) -> None:
-        response["result"] = result[:20000]
+    def _finish(
+        completed: threading.Event,
+        response: Dict[str, str],
+        result: str,
+        max_chars: int = 20000,
+    ) -> None:
+        response["result"] = result[:max_chars]
         completed.set()
 
 
@@ -1324,6 +1492,30 @@ class QtDashboard(QMainWindow):
         self._browser_tool_bridge = BrowserToolBridge(self)
         definitions = [
             ("browser_navigate", "Navega en el navegador integrado a una URL HTTP(S) o documento local del workspace.", {"url": {"type": "string", "description": "URL HTTP(S) o file:// dentro del workspace."}}, ["url"], "navigate"),
+            (
+                "browser_fetch",
+                "Devuelve el contenido HTML bruto de una URL HTTP(S), o el HTML de la página "
+                "actual del navegador si no se indica url. Limita la respuesta a 50.000 "
+                "caracteres; offset permite empezar desde un carácter concreto y path "
+                "guarda la captura completa dentro del workspace.",
+                {
+                    "url": {
+                        "type": "string",
+                        "description": "URL HTTP(S) opcional; si se omite, captura la página actual.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Ruta opcional dentro del workspace para guardar la captura completa.",
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Desplazamiento en caracteres desde el inicio (0 = principio); por defecto 0.",
+                        "minimum": 0,
+                    },
+                },
+                [],
+                "fetch",
+            ),
             ("browser_snapshot", "Devuelve URL, título, texto y controles interactivos visibles. Asigna referencias como @e1; usa esas referencias con browser_click(ref=\"e1\") o browser_fill(ref=\"e2\", text=...). Las referencias caducan tras navegar, interactuar o tomar otro snapshot.", {}, [], "snapshot"),
             (
                 "browser_console",
