@@ -241,11 +241,26 @@ class ToolTests(unittest.TestCase):
     def test_read_file(self) -> None:
         self.assertEqual(hercules.tool_read_file({"path": "sample.txt"}), "alpha\nbeta alpha\n")
         self.assertIn("no existe", hercules.tool_read_file({"path": "missing.txt"}))
+        self.assertEqual(
+            hercules.tool_read_file({"path": "sample.txt", "offset": 6, "length": 4}),
+            "beta\n... [truncado]",
+        )
+        self.assertIn(
+            "offset",
+            hercules.tool_read_file({"path": "sample.txt", "offset": -1}),
+        )
 
     def test_read_binary_file_returns_base64(self) -> None:
         (self.workspace / "sample.bin").write_bytes(b"\x00\xffbinary")
         result = hercules.tool_read_binary_file({"path": "sample.bin"})
         self.assertEqual(result, "Base64 (8 bytes): AP9iaW5hcnk=")
+        result = hercules.tool_read_binary_file(
+            {"path": "sample.bin", "offset": 2, "length": 4}
+        )
+        self.assertEqual(
+            result,
+            "Base64 (4 bytes): YmluYQ==\n... [más datos disponibles]",
+        )
         self.assertIn("no existe", hercules.tool_read_binary_file({"path": "missing.bin"}))
 
     def test_read_binary_hex_supports_offset_and_length(self) -> None:

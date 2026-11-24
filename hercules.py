@@ -2560,6 +2560,14 @@ def _resolve_workspace_path(path: str) -> Path:
 
 def tool_read_file(args: Dict[str, Any]) -> str:
     path = _resolve_workspace_path(args.get("path", ""))
+    offset = args.get("offset", 0)
+    length = args.get("length", 50_000)
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+        return "ERROR: 'offset' debe ser un entero no negativo"
+    if isinstance(length, bool) or not isinstance(length, int) or length < 0:
+        return "ERROR: 'length' debe ser un entero no negativo"
+    if length > 50_000:
+        return "ERROR: 'length' no puede superar 50000 caracteres"
     if not path.exists():
         return f"ERROR: el archivo no existe: {path}"
     if not path.is_file():
@@ -2568,27 +2576,38 @@ def tool_read_file(args: Dict[str, Any]) -> str:
         content = path.read_text(encoding="utf-8", errors="replace")
     except Exception as e:  # noqa: BLE001
         return f"ERROR al leer {path}: {e}"
-    if len(content) > 50_000:
-        content = content[:50_000] + "\n... [truncado]"
+    total_length = len(content)
+    content = content[offset : offset + length]
+    if offset + length < total_length:
+        content += "\n... [truncado]"
     return content
 
 
 def tool_read_binary_file(args: Dict[str, Any]) -> str:
     path = _resolve_workspace_path(args.get("path", ""))
+    offset = args.get("offset", 0)
+    length = args.get("length", 50_000)
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+        return "ERROR: 'offset' debe ser un entero no negativo"
+    if isinstance(length, bool) or not isinstance(length, int) or length < 0:
+        return "ERROR: 'length' debe ser un entero no negativo"
+    if length > 50_000:
+        return "ERROR: 'length' no puede superar 50000 bytes"
     if not path.exists():
         return f"ERROR: el archivo no existe: {path}"
     if not path.is_file():
         return f"ERROR: no es un archivo: {path}"
     try:
         with path.open("rb") as file:
-            content = file.read(50_001)
+            file.seek(offset)
+            content = file.read(length + 1)
     except Exception as e:  # noqa: BLE001
         return f"ERROR al leer {path}: {e}"
-    truncated = len(content) > 50_000
-    content = content[:50_000]
+    truncated = len(content) > length
+    content = content[:length]
     result = f"Base64 ({len(content)} bytes): {base64.b64encode(content).decode('ascii')}"
     if truncated:
-        result += "\n... [truncado a 50000 bytes]"
+        result += "\n... [más datos disponibles]"
     return result
 
 
@@ -3247,7 +3266,8 @@ class ToolsRegistry:
                 name="read_file",
                 description=(
                     "Lee el contenido de un archivo de texto dentro del workspace. "
-                    "Argumentos: path (ruta relativa al workspace o absoluta)."
+                    "Argumentos: path, offset opcional en caracteres (por defecto 0), "
+                    "length opcional en caracteres (por defecto 50000, máximo 50000)."
                 ),
                 risk=RiskLevel.SAFE,
                 parameters={
@@ -3256,7 +3276,18 @@ class ToolsRegistry:
                         "path": {
                             "type": "string",
                             "description": "Ruta del archivo a leer.",
-                        }
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Posición inicial en caracteres.",
+                        },
+                        "length": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 50000,
+                            "description": "Cantidad máxima de caracteres a leer.",
+                        },
                     },
                     "required": ["path"],
                 },
@@ -3268,7 +3299,8 @@ class ToolsRegistry:
                 name="read_binary_file",
                 description=(
                     "Lee un archivo binario del workspace y devuelve su contenido codificado en Base64 "
-                    "(máximo 50000 bytes). Argumentos: path (ruta del archivo)."
+                    "Argumentos: path, offset opcional en bytes (por defecto 0), "
+                    "length opcional en bytes (por defecto 50000, máximo 50000)."
                 ),
                 risk=RiskLevel.SAFE,
                 parameters={
@@ -3277,7 +3309,18 @@ class ToolsRegistry:
                         "path": {
                             "type": "string",
                             "description": "Ruta del archivo binario a leer.",
-                        }
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Posición inicial en bytes.",
+                        },
+                        "length": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 50000,
+                            "description": "Cantidad máxima de bytes a leer.",
+                        },
                     },
                     "required": ["path"],
                 },
