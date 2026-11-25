@@ -244,23 +244,52 @@ class ToolTests(unittest.TestCase):
         self.assertIn("no existe", hercules.tool_read_file({"path": "missing.txt"}))
         self.assertEqual(
             hercules.tool_read_file({"path": "sample.txt", "offset": 6, "length": 4}),
-            "beta\n... [truncado]",
+            "beta\n... [truncado; siguiente offset: 10 puntos de código]",
+        )
+        self.assertEqual(
+            hercules.tool_read_file({"path": "sample.txt", "length": 0}),
+            "",
         )
         self.assertIn(
             "offset",
             hercules.tool_read_file({"path": "sample.txt", "offset": -1}),
         )
 
+    def test_read_file_offset_counts_decoded_unicode_characters(self) -> None:
+        (self.workspace / "unicode.txt").write_text("Aé😀B", encoding="utf-8")
+
+        self.assertEqual(
+            hercules.tool_read_file(
+                {"path": "unicode.txt", "offset": 2, "length": 2}
+            ),
+            "😀B",
+        )
+        self.assertEqual(
+            hercules.tool_read_file(
+                {"path": "unicode.txt", "offset": 3, "length": 1}
+            ),
+            "B",
+        )
+
     def test_read_binary_file_returns_base64(self) -> None:
         (self.workspace / "sample.bin").write_bytes(b"\x00\xffbinary")
         result = hercules.tool_read_binary_file({"path": "sample.bin"})
-        self.assertEqual(result, "Base64 (8 bytes): AP9iaW5hcnk=")
+        self.assertEqual(
+            result, "Base64 (8 bytes desde offset 0): AP9iaW5hcnk="
+        )
         result = hercules.tool_read_binary_file(
             {"path": "sample.bin", "offset": 2, "length": 4}
         )
         self.assertEqual(
             result,
-            "Base64 (4 bytes): YmluYQ==\n... [más datos disponibles]",
+            "Base64 (4 bytes desde offset 2): YmluYQ=="
+            "\n... [más datos; siguiente offset: 6 bytes]",
+        )
+        self.assertEqual(
+            hercules.tool_read_binary_file(
+                {"path": "sample.bin", "offset": 2, "length": 0}
+            ),
+            "Base64 (0 bytes desde offset 2): ",
         )
         self.assertIn("no existe", hercules.tool_read_binary_file({"path": "missing.bin"}))
 
@@ -269,7 +298,11 @@ class ToolTests(unittest.TestCase):
         result = hercules.tool_read_binary_hex(
             {"path": "sample.bin", "offset": 1, "length": 4}
         )
-        self.assertEqual(result, "00000001  41 42 43 44                                      |ABCD|")
+        self.assertEqual(
+            result,
+            "00000001  41 42 43 44                                      |ABCD|"
+            "\n... [más datos; siguiente offset: 5 bytes]",
+        )
         self.assertEqual(
             hercules.tool_read_binary_hex({"path": "sample.bin", "offset": 7, "length": 8}),
             "(sin datos en el rango solicitado)",
@@ -552,6 +585,28 @@ class ToolTests(unittest.TestCase):
         self.assertIn("OK: escrito 7 caracteres", result)
         self.assertEqual((self.workspace / "nested" / "out.txt").read_text(encoding="utf-8"), "written")
 
+    def test_text_file_writers_normalize_all_line_endings_to_lf(self) -> None:
+        content = "one\r\ntwo\rthree\n"
+        expected = b"one\ntwo\nthree\n"
+
+        hercules.tool_write_file({"path": "write-eol.txt", "content": content})
+        hercules.tool_create_file({"path": "create-eol.txt", "content": content})
+        (self.workspace / "edit-eol.txt").write_bytes(b"old\r\nkeep\rline\n")
+        hercules.tool_edit_file(
+            {
+                "path": "edit-eol.txt",
+                "old_text": "old\r\nkeep",
+                "new_text": "new\r\nkeep",
+            }
+        )
+
+        self.assertEqual((self.workspace / "write-eol.txt").read_bytes(), expected)
+        self.assertEqual((self.workspace / "create-eol.txt").read_bytes(), expected)
+        self.assertEqual(
+            (self.workspace / "edit-eol.txt").read_bytes(),
+            b"new\nkeep\nline\n",
+        )
+
     def test_create_file(self) -> None:
         result = hercules.tool_create_file({"path": "new.txt", "content": "created"})
         self.assertIn("OK: creado 7 caracteres", result)
@@ -569,6 +624,34 @@ class ToolTests(unittest.TestCase):
         self.assertIn("sample.txt:1: alpha", result)
         self.assertIn("sample.txt:2: beta alpha", result)
         self.assertIn("obligatorio", hercules.tool_search_in_files({"query": ""}))
+
+    def test_file_search_truncation_marker_requires_more_than_200_matches(self) -> None:
+        for index in range(200):
+            (self.workspace / f"match_{index:03}.txt").touch()
+        exactly_200 = hercules.tool_search_files({"pattern": "match_*.txt"})
+        self.assertEqual(len(exactly_200.splitlines()), 200)
+        self.assertNotIn("truncado", exactly_200)
+
+        (self.workspace / "match_200.txt").touch()
+        more_than_200 = hercules.tool_search_files({"pattern": "match_*.txt"})
+        self.assertEqual(len(more_than_200.splitlines()), 201)
+        self.assertIn("truncado, más de 200", more_than_200)
+
+        matches_file = self.workspace / "matches.txt"
+        matches_file.write_text("needle\n" * 200, encoding="utf-8")
+        exactly_200 = hercules.tool_search_in_files(
+            {"query": "needle", "path": str(self.workspace), "file_pattern": "matches.txt"}
+        )
+        self.assertEqual(len(exactly_200.splitlines()), 200)
+        self.assertNotIn("truncado", exactly_200)
+
+        with matches_file.open("a", encoding="utf-8", newline="") as file:
+            file.write("needle\n")
+        more_than_200 = hercules.tool_search_in_files(
+            {"query": "needle", "path": str(self.workspace), "file_pattern": "matches.txt"}
+        )
+        self.assertEqual(len(more_than_200.splitlines()), 201)
+        self.assertIn("truncado, más de 200", more_than_200)
 
     def test_execute_command(self) -> None:
         proc = Mock(returncode=0)

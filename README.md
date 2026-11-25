@@ -48,6 +48,10 @@ Versión actual: 2.1
 | `search_files` | Busca archivos por patrón glob |
 | `search_in_files` | Busca una cadena literal en el contenido de archivos |
 
+Las herramientas de texto usan UTF-8 y saltos de línea `LF` de forma uniforme: `write_file` y `create_file` convierten `CRLF`/`CR` a `LF`, `edit_file` busca y escribe con esa misma normalización, y `read_file`/`search_in_files` leen con saltos normalizados. `read_file` cuenta offsets como puntos de código Unicode desde 0 (no bytes ni líneas); `search_in_files` muestra líneas desde 1. Los bytes UTF-8 inválidos se sustituyen por `U+FFFD` al leer/buscar, mientras que `edit_file` los rechaza para evitar una edición con pérdida.
+
+Las herramientas binarias usan offsets de bytes desde 0. `read_binary_file` devuelve Base64; `read_binary_hex` recibe offsets numéricos decimales, aunque muestra las direcciones en hexadecimal. Los resultados truncados indican el siguiente offset en su unidad correspondiente.
+
 ## 🖥️ Navegador integrado
 
 | Herramienta | Descripción |

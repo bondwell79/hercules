@@ -2558,6 +2558,10 @@ def _resolve_workspace_path(path: str) -> Path:
     return resolved
 
 
+def _normalize_text_newlines(content: str) -> str:
+    return content.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def tool_read_file(args: Dict[str, Any]) -> str:
     path = _resolve_workspace_path(args.get("path", ""))
     offset = args.get("offset", 0)
@@ -2578,8 +2582,11 @@ def tool_read_file(args: Dict[str, Any]) -> str:
         return f"ERROR al leer {path}: {e}"
     total_length = len(content)
     content = content[offset : offset + length]
-    if offset + length < total_length:
-        content += "\n... [truncado]"
+    next_offset = offset + len(content)
+    if length > 0 and next_offset < total_length:
+        content += (
+            f"\n... [truncado; siguiente offset: {next_offset} puntos de código]"
+        )
     return content
 
 
@@ -2603,11 +2610,16 @@ def tool_read_binary_file(args: Dict[str, Any]) -> str:
             content = file.read(length + 1)
     except Exception as e:  # noqa: BLE001
         return f"ERROR al leer {path}: {e}"
-    truncated = len(content) > length
+    truncated = length > 0 and len(content) > length
     content = content[:length]
-    result = f"Base64 ({len(content)} bytes): {base64.b64encode(content).decode('ascii')}"
+    result = (
+        f"Base64 ({len(content)} bytes desde offset {offset}): "
+        f"{base64.b64encode(content).decode('ascii')}"
+    )
     if truncated:
-        result += "\n... [más datos disponibles]"
+        result += (
+            f"\n... [más datos; siguiente offset: {offset + len(content)} bytes]"
+        )
     return result
 
 
@@ -2784,17 +2796,24 @@ def tool_read_binary_hex(args: Dict[str, Any]) -> str:
     try:
         with path.open("rb") as file:
             file.seek(offset)
-            content = file.read(length)
+            content = file.read(length + 1)
     except Exception as e:  # noqa: BLE001
         return f"ERROR al leer {path}: {e}"
 
+    truncated = length > 0 and len(content) > length
+    content = content[:length]
     lines = []
     for row_offset in range(0, len(content), 16):
         row = content[row_offset : row_offset + 16]
         hex_bytes = " ".join(f"{byte:02x}" for byte in row)
         ascii_bytes = "".join(chr(byte) if 32 <= byte < 127 else "." for byte in row)
         lines.append(f"{offset + row_offset:08x}  {hex_bytes:<47}  |{ascii_bytes}|")
-    return "\n".join(lines) if lines else "(sin datos en el rango solicitado)"
+    result = "\n".join(lines) if lines else "(sin datos en el rango solicitado)"
+    if truncated:
+        result += (
+            f"\n... [más datos; siguiente offset: {offset + len(content)} bytes]"
+        )
+    return result
 
 
 def tool_list_directory(args: Dict[str, Any]) -> str:
@@ -2833,7 +2852,8 @@ def tool_search_files(args: Dict[str, Any]) -> str:
             except ValueError:
                 rel = p
             matches.append(str(rel))
-            if len(matches) >= 200:
+            if len(matches) > 200:
+                matches.pop()
                 matches.append("... [truncado, más de 200 coincidencias]")
                 break
     except Exception as e:  # noqa: BLE001
@@ -2882,8 +2902,10 @@ def tool_write_file(args: Dict[str, Any]) -> str:
     path = _resolve_workspace_path(args.get("path", ""))
     content = args.get("content", "")
     try:
+        content = _normalize_text_newlines(content)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        with path.open("w", encoding="utf-8", newline="") as file:
+            file.write(content)
     except Exception as e:  # noqa: BLE001
         return f"ERROR al escribir {path}: {e}"
     return f"OK: escrito {len(content)} caracteres en {path}"
@@ -2893,7 +2915,7 @@ def tool_create_file(args: Dict[str, Any]) -> str:
     if "content" not in args or not isinstance(args["content"], str):
         return "ERROR: 'content' es obligatorio y debe ser texto"
     path = _resolve_workspace_path(args.get("path", ""))
-    content = args["content"]
+    content = _normalize_text_newlines(args["content"])
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("x", encoding="utf-8", newline="") as file:
@@ -2913,8 +2935,11 @@ def tool_edit_file(args: Dict[str, Any]) -> str:
         return f"ERROR: el archivo no existe o no es un archivo: {path}"
     try:
         content = path.read_text(encoding="utf-8")
+        old_text = _normalize_text_newlines(old_text)
+        new_text = _normalize_text_newlines(new_text)
         if old_text == "":
-            path.write_text(new_text, encoding="utf-8")
+            with path.open("w", encoding="utf-8", newline="") as file:
+                file.write(new_text)
             return f"OK: editado {path}"
         occurrences = content.count(old_text)
         if occurrences != 1:
@@ -2922,7 +2947,8 @@ def tool_edit_file(args: Dict[str, Any]) -> str:
                 f"ERROR: se esperaba una única coincidencia de 'old_text' en {path}, "
                 f"pero se encontraron {occurrences}"
             )
-        path.write_text(content.replace(old_text, new_text, 1), encoding="utf-8")
+        with path.open("w", encoding="utf-8", newline="") as file:
+            file.write(content.replace(old_text, new_text, 1))
     except Exception as e:  # noqa: BLE001
         return f"ERROR al editar {path}: {e}"
     return f"OK: editado {path}"
@@ -2955,7 +2981,8 @@ def tool_search_in_files(args: Dict[str, Any]) -> str:
                 if query in line:
                     relative = resolved.relative_to(WORKSPACE_DIR)
                     matches.append(f"{relative}:{line_number}: {line}")
-                    if len(matches) >= 200:
+                    if len(matches) > 200:
+                        matches.pop()
                         matches.append("... [truncado, más de 200 coincidencias]")
                         return "\n".join(matches)
     except Exception as e:  # noqa: BLE001
@@ -3266,8 +3293,13 @@ class ToolsRegistry:
                 name="read_file",
                 description=(
                     "Lee el contenido de un archivo de texto dentro del workspace. "
-                    "Argumentos: path, offset opcional en caracteres (por defecto 0), "
-                    "length opcional en caracteres (por defecto 50000, máximo 50000)."
+                    "offset y length cuentan puntos de código Unicode del texto decodificado "
+                    "como UTF-8; offset empieza en 0 y NO cuenta bytes ni líneas. "
+                    "Los saltos CRLF/CR se normalizan a LF y los bytes UTF-8 inválidos "
+                    "se sustituyen por U+FFFD. Para archivos binarios, usa read_binary_file. "
+                    "Argumentos: path, offset opcional (por defecto 0), length opcional "
+                    "(por defecto 50000, máximo 50000 caracteres). Si hay más contenido, "
+                    "el resultado indica el siguiente offset en puntos de código."
                 ),
                 risk=RiskLevel.SAFE,
                 parameters={
@@ -3280,13 +3312,19 @@ class ToolsRegistry:
                         "offset": {
                             "type": "integer",
                             "minimum": 0,
-                            "description": "Posición inicial en caracteres.",
+                            "description": (
+                                "Índice de carácter Unicode desde 0 en el texto UTF-8 "
+                                "decodificado; no es un offset en bytes ni en líneas."
+                            ),
                         },
                         "length": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 50000,
-                            "description": "Cantidad máxima de caracteres a leer.",
+                            "description": (
+                                "Cantidad máxima de puntos de código Unicode decodificados "
+                                "que se leerán."
+                            ),
                         },
                     },
                     "required": ["path"],
@@ -3298,9 +3336,11 @@ class ToolsRegistry:
             ToolDefinition(
                 name="read_binary_file",
                 description=(
-                    "Lee un archivo binario del workspace y devuelve su contenido codificado en Base64 "
-                    "Argumentos: path, offset opcional en bytes (por defecto 0), "
-                    "length opcional en bytes (por defecto 50000, máximo 50000)."
+                    "Lee bytes de un archivo binario y devuelve Base64. offset es un índice "
+                    "de byte desde 0 (entero decimal, no caracteres ni hexadecimal); length "
+                    "también cuenta bytes. Si hay más datos, el resultado indica el siguiente "
+                    "offset en bytes. Argumentos: path, offset opcional (0), length opcional "
+                    "(50000 bytes por defecto y máximo)."
                 ),
                 risk=RiskLevel.SAFE,
                 parameters={
@@ -3313,7 +3353,10 @@ class ToolsRegistry:
                         "offset": {
                             "type": "integer",
                             "minimum": 0,
-                            "description": "Posición inicial en bytes.",
+                            "description": (
+                                "Índice de byte desde 0, expresado como entero decimal; "
+                                "no es un offset de caracteres ni hexadecimal."
+                            ),
                         },
                         "length": {
                             "type": "integer",
@@ -3364,8 +3407,11 @@ class ToolsRegistry:
             ToolDefinition(
                 name="read_binary_hex",
                 description=(
-                    "Lee un rango de un archivo binario y lo muestra como volcado hexadecimal con ASCII. "
-                    "Argumentos: path, offset (opcional, por defecto 0), length (opcional, por defecto 256; máximo 4096)."
+                    "Lee bytes desde un offset de byte desde 0 (argumento entero decimal) "
+                    "y los muestra en hexadecimal y ASCII. Las direcciones de cada fila "
+                    "se imprimen en hexadecimal; no las copies como si fueran offsets decimales. "
+                    "Si quedan bytes, el resultado indica el siguiente offset decimal. "
+                    "Argumentos: path, offset (0 por defecto), length (256 bytes por defecto; máximo 4096)."
                 ),
                 risk=RiskLevel.SAFE,
                 parameters={
@@ -3378,7 +3424,10 @@ class ToolsRegistry:
                         "offset": {
                             "type": "integer",
                             "minimum": 0,
-                            "description": "Posición inicial en bytes.",
+                            "description": (
+                                "Índice de byte desde 0 como entero decimal. Las direcciones "
+                                "devueltas por el volcado se muestran en hexadecimal."
+                            ),
                         },
                         "length": {
                             "type": "integer",
@@ -3417,6 +3466,7 @@ class ToolsRegistry:
                 name="search_files",
                 description=(
                     "Busca archivos por patrón (glob) dentro de un directorio. "
+                    "Devuelve rutas relativas; como máximo 200, e indica si hay más. "
                     "Argumentos: pattern (obligatorio), path (opcional)."
                 ),
                 risk=RiskLevel.SAFE,
@@ -3583,7 +3633,8 @@ class ToolsRegistry:
                 name="write_file",
                 description=(
                     "Escribe contenido en un archivo del workspace (crea "
-                    "directorios si no existen). Argumentos: path, content."
+                    "directorios si no existen). Escribe UTF-8 y normaliza CRLF/CR a LF "
+                    "en cualquier sistema operativo. Argumentos: path, content."
                 ),
                 risk=RiskLevel.SAFE,
                 parameters={
@@ -3595,7 +3646,9 @@ class ToolsRegistry:
                         },
                         "content": {
                             "type": "string",
-                            "description": "Contenido a escribir.",
+                            "description": (
+                                "Texto UTF-8; los finales CRLF y CR se normalizan a LF."
+                            ),
                         },
                     },
                     "required": ["path", "content"],
@@ -3608,6 +3661,7 @@ class ToolsRegistry:
                 name="create_file",
                 description=(
                     "Crea un archivo nuevo dentro del workspace sin sobrescribir uno existente. "
+                    "Escribe UTF-8 y normaliza CRLF/CR a LF en cualquier sistema operativo. "
                     "Argumentos: path, content (obligatorio)."
                 ),
                 risk=RiskLevel.SAFE,
@@ -3615,7 +3669,10 @@ class ToolsRegistry:
                     "type": "object",
                     "properties": {
                         "path": {"type": "string", "description": "Ruta del archivo nuevo."},
-                        "content": {"type": "string", "description": "Contenido inicial (opcional)."},
+                        "content": {
+                            "type": "string",
+                            "description": "Texto UTF-8; los finales CRLF y CR se normalizan a LF.",
+                        },
                     },
                     "required": ["path", "content"],
                 },
@@ -3627,7 +3684,8 @@ class ToolsRegistry:
                 name="edit_file",
                 description=(
                     "Reemplaza una cadena exacta en un archivo existente, solo si hay una coincidencia; "
-                    "si old_text está vacío, sustituye todo el contenido. "
+                    "lee UTF-8 estricto y normaliza CRLF/CR a LF antes de buscar y al escribir. "
+                    "Si old_text está vacío, sustituye todo el contenido. "
                     "Argumentos: path, old_text, new_text."
                 ),
                 risk=RiskLevel.SAFE,
@@ -3635,8 +3693,17 @@ class ToolsRegistry:
                     "type": "object",
                     "properties": {
                         "path": {"type": "string", "description": "Ruta del archivo a editar."},
-                        "old_text": {"type": "string", "description": "Texto a reemplazar; si está vacío, sustituye todo el contenido del archivo."},
-                        "new_text": {"type": "string", "description": "Texto que reemplaza la coincidencia."},
+                        "old_text": {
+                            "type": "string",
+                            "description": (
+                                "Texto exacto a reemplazar; sus saltos se normalizan a LF. "
+                                "Si está vacío, sustituye todo el contenido."
+                            ),
+                        },
+                        "new_text": {
+                            "type": "string",
+                            "description": "Texto de reemplazo UTF-8; sus saltos se normalizan a LF.",
+                        },
                     },
                     "required": ["path", "old_text", "new_text"],
                 },
@@ -3648,6 +3715,9 @@ class ToolsRegistry:
                 name="search_in_files",
                 description=(
                     "Busca una cadena literal en el contenido de archivos dentro del workspace. "
+                    "Lee como UTF-8 reemplazando bytes inválidos por U+FFFD, normaliza saltos "
+                    "a LF y devuelve números de línea empezando en 1. Puede devolver 200 "
+                    "coincidencias como máximo e indica si hay más. "
                     "Argumentos: query, path (opcional), file_pattern (opcional, por defecto '*')."
                 ),
                 risk=RiskLevel.SAFE,
