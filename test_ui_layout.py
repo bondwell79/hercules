@@ -225,7 +225,10 @@ class QtDashboardLayoutTests(unittest.TestCase):
         self.assertEqual(saved.read_text(encoding="utf-8"), content)
         self.assertIn(content[:50_000], response["result"])
         self.assertNotIn(content[50_000:], response["result"])
-        self.assertIn("Contenido truncado a 50000 caracteres", response["result"])
+        self.assertIn(
+            "HTML truncado a 50000 puntos de código. Siguiente offset: 50000.",
+            response["result"],
+        )
 
     def test_browser_fetch_applies_offset_to_current_html(self):
         bridge = BrowserToolBridge(self.window)
@@ -240,11 +243,31 @@ class QtDashboardLayoutTests(unittest.TestCase):
             bridge._execute(("fetch", {"offset": 3}, completed, response))
 
         self.assertIn("count < 3", callbacks[0][0])
+        self.assertIn("codePointAt(start) > 0xFFFF ? 2 : 1", callbacks[0][0])
         callbacks[0][1]("3456789")
 
         self.assertTrue(completed.is_set())
+        self.assertIn("Fragmento HTML desde offset 3", response["result"])
         self.assertIn("3456789", response["result"])
         self.assertNotIn("012", response["result"])
+
+    def test_browser_fetch_truncation_reports_next_source_offset(self):
+        bridge = BrowserToolBridge(self.window)
+        completed = threading.Event()
+        response = {}
+        callbacks = []
+        with patch.object(
+            self.window.web_view.page(),
+            "runJavaScript",
+            side_effect=lambda script, callback: callbacks.append(callback),
+        ):
+            bridge._execute(("fetch", {"offset": 12}, completed, response))
+
+        callbacks[0]("😀" + ("x" * 50_000))
+
+        self.assertTrue(completed.is_set())
+        self.assertIn("Fragmento HTML desde offset 12", response["result"])
+        self.assertIn("Siguiente offset: 50012", response["result"])
 
     def test_browser_fetch_rejects_negative_offset(self):
         bridge = BrowserToolBridge(self.window)
@@ -320,18 +343,19 @@ class QtDashboardLayoutTests(unittest.TestCase):
             def __exit__(self, *_args):
                 self.close()
 
-        page = Response(b"0123456789")
+        page = Response("A😀BC".encode("utf-8"))
         with patch("hercules_qt.urllib.request.urlopen", return_value=page):
             bridge._execute((
                 "fetch",
-                {"url": "https://example.test/page", "offset": 3},
+                {"url": "https://example.test/page", "offset": 2},
                 completed,
                 response,
             ))
             self.assertTrue(completed.wait(2))
 
-        self.assertIn("3456789", response["result"])
-        self.assertNotIn("012", response["result"])
+        self.assertIn("Fragmento HTML desde offset 2", response["result"])
+        self.assertIn("BC", response["result"])
+        self.assertNotIn("A😀", response["result"])
 
     def test_browser_snapshot_assigns_interactive_refs(self):
         bridge = BrowserToolBridge(self.window)

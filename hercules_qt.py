@@ -328,6 +328,7 @@ class BrowserToolBridge(QObject):
                         url,
                         path,
                         content_offset,
+                        offset,
                     )
                 except Exception as exc:
                     self._finish(completed, response, f"ERROR al capturar {url}: {exc}")
@@ -363,7 +364,7 @@ class BrowserToolBridge(QObject):
         self.dashboard.web_view.page().runJavaScript(
             source_expression,
             lambda content: self._complete_current_fetch(
-                completed, response, content, path, content_offset
+                completed, response, content, path, content_offset, offset
             ),
         )
 
@@ -373,7 +374,8 @@ class BrowserToolBridge(QObject):
         response: Dict[str, str],
         content: Any,
         path: str,
-        offset: int,
+        content_offset: int,
+        source_offset: int,
     ) -> None:
         if not isinstance(content, str):
             self._finish(completed, response, "ERROR: no se pudo capturar el HTML de la página actual")
@@ -382,7 +384,14 @@ class BrowserToolBridge(QObject):
         raw_content = content.encode("utf-8")
         try:
             self._complete_fetch(
-                completed, response, content, raw_content, url, path, offset
+                completed,
+                response,
+                content,
+                raw_content,
+                url,
+                path,
+                content_offset,
+                source_offset,
             )
         except Exception as exc:
             self._finish(completed, response, f"ERROR al capturar {url}: {exc}")
@@ -395,7 +404,8 @@ class BrowserToolBridge(QObject):
         raw_content: bytes,
         url: str,
         raw_path: str,
-        offset: int,
+        content_offset: int,
+        source_offset: int,
     ) -> None:
         output = [f"URL: {url}"]
         if raw_path:
@@ -409,18 +419,28 @@ class BrowserToolBridge(QObject):
             path.write_bytes(raw_content)
             output.append(f"Captura completa guardada en: {path}")
 
-        selected_content = content[offset : offset + BROWSER_FETCH_MAX_CHARS + 1]
-        truncated = len(content) > offset + BROWSER_FETCH_MAX_CHARS
-        output.append(selected_content[:BROWSER_FETCH_MAX_CHARS])
+        selected_content = content[
+            content_offset : content_offset + BROWSER_FETCH_MAX_CHARS + 1
+        ]
+        displayed_content = selected_content[:BROWSER_FETCH_MAX_CHARS]
+        truncated = (
+            len(content) > content_offset + BROWSER_FETCH_MAX_CHARS
+        )
+        output.append(
+            f"Fragmento HTML desde offset {source_offset} "
+            "(puntos de código Unicode, base 0):"
+        )
+        output.append(displayed_content)
         if truncated:
             saved_message = (
                 "La captura completa se guardó en el archivo."
                 if raw_path
                 else "No se guardó un archivo."
             )
+            next_offset = source_offset + len(displayed_content)
             output.append(
-                f"[Contenido truncado a {BROWSER_FETCH_MAX_CHARS} caracteres. "
-                f"{saved_message}]"
+                f"[HTML truncado a {BROWSER_FETCH_MAX_CHARS} puntos de código. "
+                f"Siguiente offset: {next_offset}. {saved_message}]"
             )
         self._finish(
             completed,
@@ -1495,9 +1515,13 @@ class QtDashboard(QMainWindow):
             (
                 "browser_fetch",
                 "Devuelve el contenido HTML bruto de una URL HTTP(S), o el HTML de la página "
-                "actual del navegador si no se indica url. Limita la respuesta a 50.000 "
-                "caracteres; offset permite empezar desde un carácter concreto y path "
-                "guarda la captura completa dentro del workspace.",
+                "actual del navegador si no se indica url. offset cuenta puntos de código "
+                "Unicode desde 0 en el HTML decodificado (por defecto 0; no bytes, líneas "
+                "ni unidades UTF-16); "
+                "el fragmento puede empezar dentro de una etiqueta o entidad HTML. Para HTTP "
+                "se usa el charset declarado o UTF-8 y los bytes inválidos se sustituyen por "
+                "U+FFFD. Devuelve como máximo 50.000 puntos de código e indica el siguiente "
+                "offset si hay más; path guarda la captura completa, no solo el fragmento.",
                 {
                     "url": {
                         "type": "string",
@@ -1509,7 +1533,11 @@ class QtDashboard(QMainWindow):
                     },
                     "offset": {
                         "type": "integer",
-                        "description": "Desplazamiento en caracteres desde el inicio (0 = principio); por defecto 0.",
+                        "description": (
+                            "Índice de punto de código Unicode desde 0 en el HTML decodificado; "
+                            "por defecto 0; no es un offset en bytes, líneas ni unidades UTF-16. "
+                            "Puede cortar el HTML dentro de una etiqueta o entidad."
+                        ),
                         "minimum": 0,
                     },
                 },

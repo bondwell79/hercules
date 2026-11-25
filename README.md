@@ -57,7 +57,7 @@ Las herramientas binarias usan offsets de bytes desde 0. `read_binary_file` devu
 | Herramienta | Descripción |
 |---|---|
 | `browser_navigate` | Navega a una URL HTTP(S) o documento local |
-| `browser_fetch` | Devuelve el HTML bruto de una URL HTTP(S) o de la página actual; admite `offset` en caracteres (0 = inicio), puede guardar la captura completa dentro del workspace y limita la respuesta a 50.000 caracteres |
+| `browser_fetch` | Devuelve HTML bruto; `offset` cuenta puntos de código Unicode desde 0 tras decodificar (no bytes, líneas ni unidades UTF-16), puede cortar dentro de una etiqueta; limita a 50.000 puntos e indica el siguiente offset; `path` guarda la captura completa |
 | `browser_snapshot` | Devuelve URL, título, texto y controles interactivos, asignando referencias `@e1`, `@e2`, etc. |
 | `browser_console` | Sin argumentos, devuelve los mensajes de consola pendientes; con `code`, ejecuta JavaScript en la página cargada y devuelve su resultado |
 | `browser_click` | Hace clic en un control usando una referencia del último snapshot o, por compatibilidad, un selector CSS |
